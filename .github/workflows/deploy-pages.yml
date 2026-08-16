@@ -1,0 +1,65 @@
+# site/(React + Vite)をビルドして GitHub Pages へデプロイするワークフロー。
+#
+# トリガ:
+#   - main への push のうち site/ 配下(自宅PCの日次バッチが push する
+#     site/public/data/*.json を含む)またはこのファイル自体が変わったとき
+#   - 手動実行(workflow_dispatch)
+#
+# 前提: リポジトリの Settings > Pages > Source が「GitHub Actions」になっていること。
+name: Deploy site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+# Pages デプロイに必要な最小権限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# デプロイの同時実行を防ぐ(実行中のデプロイは完走させる)
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          # ルートではなく site/ 配下の lockfile をキャッシュキーにする
+          cache-dependency-path: site/package-lock.json
+
+      - name: Build site
+        working-directory: site
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

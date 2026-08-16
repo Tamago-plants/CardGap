@@ -137,9 +137,24 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
     notes          TEXT
 );
 
+-- カード×日付ごとの eBay 相場スナップショット。matches と違い実行のたびに
+-- 消さず蓄積する(サイトの価格推移チャートと日次ダイジェストの騰落計算用)
+CREATE TABLE IF NOT EXISTS market_history (
+    id         INTEGER PRIMARY KEY,
+    card_id    INTEGER NOT NULL REFERENCES cards(id),
+    date       TEXT NOT NULL,        -- ISO日付(ローカル日)
+    median_usd REAL NOT NULL,
+    count      INTEGER NOT NULL,
+    min_usd    REAL NOT NULL,
+    max_usd    REAL NOT NULL,
+    fx_rate    REAL,
+    UNIQUE(card_id, date)
+);
+
 CREATE INDEX IF NOT EXISTS idx_ebay_card_sold ON listings_ebay_sold(card_id, sold_at);
 CREATE INDEX IF NOT EXISTS idx_mercari_card ON listings_mercari(card_id);
 CREATE INDEX IF NOT EXISTS idx_matches_card ON matches(card_id);
+CREATE INDEX IF NOT EXISTS idx_history_card_date ON market_history(card_id, date);
 """
 
 
@@ -511,6 +526,68 @@ def mark_notified(conn: sqlite3.Connection, source: str, listing_url: str) -> No
 
 
 # ------------------------------------------------------------ fx_rates
+
+# ------------------------------------------------------ market_history
+
+def upsert_market_snapshot(
+    conn: sqlite3.Connection,
+    card_id: int,
+    date: str,
+    median_usd: float,
+    count: int,
+    min_usd: float,
+    max_usd: float,
+    fx_rate: Optional[float] = None,
+) -> None:
+    """カード×日付の相場スナップショットを保存(同日再実行は上書き)。"""
+    conn.execute(
+        """
+        INSERT INTO market_history (card_id, date, median_usd, count, min_usd, max_usd, fx_rate)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(card_id, date) DO UPDATE SET
+            median_usd = excluded.median_usd,
+            count = excluded.count,
+            min_usd = excluded.min_usd,
+            max_usd = excluded.max_usd,
+            fx_rate = excluded.fx_rate
+        """,
+        (card_id, date, median_usd, count, min_usd, max_usd, fx_rate),
+    )
+
+
+def market_history_for_card(
+    conn: sqlite3.Connection, card_id: int, since_date: str | None = None
+) -> list[sqlite3.Row]:
+    """指定カードのスナップショットを日付昇順で返す。"""
+    if since_date:
+        return conn.execute(
+            "SELECT * FROM market_history WHERE card_id = ? AND date >= ? ORDER BY date",
+            (card_id, since_date),
+        ).fetchall()
+    return conn.execute(
+        "SELECT * FROM market_history WHERE card_id = ? ORDER BY date", (card_id,)
+    ).fetchall()
+
+
+def latest_two_snapshots(conn: sqlite3.Connection, card_id: int) -> list[sqlite3.Row]:
+    """最新2日分のスナップショット(騰落計算用)。新しい順で最大2行。"""
+    return conn.execute(
+        "SELECT * FROM market_history WHERE card_id = ? ORDER BY date DESC LIMIT 2",
+        (card_id,),
+    ).fetchall()
+
+
+def latest_scrape_runs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """ソースごとの直近1実行(サイト/ダイジェストの収集ヘルス表示用)。"""
+    return conn.execute(
+        """
+        SELECT s.* FROM scrape_runs s
+        JOIN (SELECT source, MAX(id) AS max_id FROM scrape_runs GROUP BY source) t
+          ON s.id = t.max_id
+        ORDER BY s.source
+        """
+    ).fetchall()
+
 
 def save_fx_rate(conn: sqlite3.Connection, pair: str, rate: float) -> None:
     conn.execute(

@@ -1,0 +1,565 @@
+/* CardGap ダッシュボード 手書きCSS(ライトテーマ固定)。
+   色トークンはここで一元定義。系列色は #4269d0 のみ、
+   騰落の緑/赤は矢印記号と必ず併用する(色だけに意味を持たせない)。 */
+
+:root {
+  --bg: #f5f6f8;            /* ページ背景 */
+  --surface: #ffffff;       /* カード背景 */
+  --border: #e2e5ea;        /* 罫線・枠 */
+  --grid: #eceef2;          /* チャートのグリッド線(さらに薄く) */
+  --text: #21262e;          /* 本文 */
+  --text-sub: #5c6470;      /* 補助テキスト */
+  --text-muted: #8b93a0;    /* 軸ラベル等の控えめな色 */
+  --series: #4269d0;        /* チャート系列色(青・1色のみ) */
+  --up: #1a7f4b;            /* 上昇(緑系テキスト) */
+  --down: #c2413f;          /* 下落(赤系テキスト) */
+  --warn-bg: #fdf3d7;
+  --warn-border: #e8d48a;
+  --danger: #c2413f;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic UI",
+    "Noto Sans JP", "Meiryo", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px 16px 64px;
+}
+
+/* ---------------- ヘッダ ---------------- */
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+  padding: 8px 0 16px;
+}
+
+.site-header h1 {
+  font-size: 26px;
+  letter-spacing: 0.02em;
+}
+
+.site-header .tagline {
+  color: var(--text-sub);
+  font-size: 13px;
+}
+
+.header-meta {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  color: var(--text-sub);
+  font-size: 12px;
+  text-align: right;
+}
+
+.header-meta strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- 通知バナー ---------------- */
+.banner {
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.banner code {
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.banner.error {
+  background: #fbeaea;
+  border-color: #e5b4b3;
+}
+
+/* ---------------- 汎用カード ---------------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.card > h2 {
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+
+.section-note {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.empty-note {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 12px 0;
+  text-align: center;
+}
+
+/* ---------------- サマリタイル ---------------- */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.tile .tile-label {
+  color: var(--text-sub);
+  font-size: 12px;
+}
+
+.tile .tile-value {
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.tile .tile-sub {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.tile .tile-value.ok {
+  color: var(--up);
+  font-size: 22px;
+}
+
+.tile .tile-value.bad {
+  color: var(--danger);
+}
+
+/* ---------------- 相場動向(movers) ---------------- */
+.movers-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .movers-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.movers-col h3 {
+  font-size: 13px;
+  color: var(--text-sub);
+  margin-bottom: 8px;
+}
+
+.movers-col ul {
+  list-style: none;
+}
+
+.movers-col li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--grid);
+  font-size: 13px;
+}
+
+.movers-col li:first-child {
+  border-top: none;
+}
+
+.mover-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mover-price {
+  color: var(--text-sub);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mover-change {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mover-change.up {
+  color: var(--up);
+}
+
+.mover-change.down {
+  color: var(--down);
+}
+
+/* ---------------- フィルタ行 ---------------- */
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.filter-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.filter-row select,
+.filter-row input[type="number"] {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+
+.filter-row input[type="number"] {
+  width: 5em;
+}
+
+.filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-group .group-label {
+  color: var(--text-sub);
+}
+
+/* ---------------- 案件テーブル ---------------- */
+.table-wrap {
+  overflow-x: auto;
+}
+
+table.deals {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 760px;
+}
+
+table.deals th,
+table.deals td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--grid);
+  white-space: nowrap;
+}
+
+table.deals th {
+  color: var(--text-sub);
+  font-weight: 600;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+table.deals th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+table.deals th.sortable:hover {
+  color: var(--text);
+}
+
+table.deals td.num,
+table.deals th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+table.deals tbody tr {
+  cursor: pointer;
+}
+
+table.deals tbody tr:hover {
+  background: #f3f6fd;
+}
+
+table.deals tbody tr.selected {
+  background: #e9effb;
+}
+
+.deal-name {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thumb {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--grid);
+  display: block;
+}
+
+.thumb-placeholder {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--grid);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+}
+
+.profit-pos {
+  color: var(--up);
+  font-weight: 600;
+}
+
+.profit-neg {
+  color: var(--down);
+  font-weight: 600;
+}
+
+/* バッジ(confidence / 相場信頼度)。色+文字の両方で区別する */
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: var(--grid);
+  color: var(--text-sub);
+}
+
+.badge.conf-high {
+  background: #e7edfa;
+  border-color: #c3d0ef;
+  color: #2c4a9e;
+}
+
+.badge.conf-medium {
+  background: #fdf3d7;
+  border-color: #e8d48a;
+  color: #7a611a;
+}
+
+.badge.conf-low {
+  background: #f2f3f5;
+  border-color: #dcdfe4;
+  color: #5c6470;
+}
+
+.badge.rel-ok {
+  background: #e5f3ec;
+  border-color: #b9dcc9;
+  color: #1a6b41;
+}
+
+.badge.rel-low {
+  background: #fbeaea;
+  border-color: #e5b4b3;
+  color: #9c3331;
+}
+
+/* ---------------- 詳細パネル ---------------- */
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.detail-head h2 {
+  font-size: 16px;
+}
+
+.detail-close {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-sub);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.detail-close:hover {
+  color: var(--text);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 96px 1fr 260px;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 760px) {
+  .detail-grid {
+    grid-template-columns: 96px 1fr;
+  }
+  .detail-grid .pnl {
+    grid-column: 1 / -1;
+  }
+}
+
+.detail-image {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--grid);
+}
+
+.detail-info dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  font-size: 13px;
+}
+
+.detail-info dt {
+  color: var(--text-sub);
+  white-space: nowrap;
+}
+
+.detail-info dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-info a {
+  color: var(--series);
+}
+
+/* 損益内訳 */
+.pnl h3,
+.chart-block h3 {
+  font-size: 13px;
+  color: var(--text-sub);
+  margin-bottom: 8px;
+}
+
+.pnl table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pnl td {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--grid);
+}
+
+.pnl td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.pnl tr.total td {
+  border-bottom: none;
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+
+/* ---------------- チャート ---------------- */
+.chart-wrap {
+  position: relative;
+}
+
+.chart-wrap svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.chart-placeholder {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 40px 16px;
+}
+
+.chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(20, 30, 50, 0.12);
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  z-index: 10;
+}
+
+.chart-tooltip .tt-value {
+  font-weight: 600;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-tooltip .tt-label {
+  color: var(--text-sub);
+}
+
+/* ---------------- フッタ ---------------- */
+.site-footer {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+  padding-top: 24px;
+}

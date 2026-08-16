@@ -190,3 +190,153 @@ def send_test_message(cfg: Config) -> bool:
         logger.error("Discord webhook が未設定です(DISCORD_WEBHOOK_URL か config.yaml で設定)")
         return False
     return _post(webhook, {"content": "CardGap 疎通テスト"})
+
+
+# ------------------------------------------------------- 日次ダイジェスト
+# export.build_summary_payload()(= summary.json と同じ内容)を毎日1通の
+# ダイジェストにして送る。案件個別の速報通知(send_notifications)とは独立で、
+# 毎日送る前提のため notified_deals による通知済み管理は行わない。
+
+# ダイジェスト embed の色
+_DIGEST_COLOR_SUMMARY = 0x3498DB  # サマリ: 青
+_DIGEST_COLOR_RANKING = 0xF1C40F  # ランキング: 金
+_DIGEST_COLOR_MOVERS = 0x9B59B6   # 相場動向: 紫
+
+# 利益率ランキングに載せる件数
+_DIGEST_TOP_N = 5
+
+
+def _digest_health_line(h: dict[str, Any]) -> str:
+    """収集ヘルス1ソース分の行。失敗がクエリ数の半分を超えたら ⚠ を付ける。
+
+    例: 'ebay: 50クエリ 失敗2 取得830件 パース失敗3'
+    """
+    line = (
+        f"{h['source']}: {h['queries_total']}クエリ 失敗{h['queries_failed']} "
+        f"取得{h['items_found']}件 パース失敗{h['parse_failures']}"
+    )
+    warn_over = h["queries_total"] / 2
+    if h["queries_failed"] > warn_over or h["parse_failures"] > warn_over:
+        line = "⚠ " + line
+    return line
+
+
+def _digest_summary_embed(summary: dict[str, Any]) -> dict[str, Any]:
+    """embed「サマリ」: 案件数・為替レート・収集ヘルス。"""
+    fx = summary.get("fx_rate")
+    fields: list[dict[str, Any]] = [
+        {
+            "name": "閾値超え案件",
+            "value": f"{summary['deal_count_above_threshold']} / {summary['deal_count_total']}件",
+            "inline": True,
+        },
+        {
+            "name": "USD/JPY",
+            "value": f"¥{fx:.2f}" if fx is not None else "取得なし",
+            "inline": True,
+        },
+    ]
+    health = summary.get("scrape_health") or []
+    if health:
+        fields.append(
+            {
+                "name": "収集ヘルス",
+                "value": "\n".join(_digest_health_line(h) for h in health),
+                "inline": False,
+            }
+        )
+    return {"title": "サマリ", "color": _DIGEST_COLOR_SUMMARY, "fields": fields}
+
+
+def _digest_ranking_embed(summary: dict[str, Any]) -> dict[str, Any]:
+    """embed「利益率ランキング TOP5」: top_by_rate の先頭5件。空ならその旨。"""
+    top = (summary.get("top_by_rate") or [])[:_DIGEST_TOP_N]
+    if top:
+        lines = [
+            f"{i}. {r['display_name']} [{r['source']}] 仕入¥{r['buy_price_jpy']:,} "
+            f"→ 利益¥{r['profit_jpy']:,.0f} ({r['profit_rate']:.0%}) {r['listing_url']}"
+            for i, r in enumerate(top, start=1)
+        ]
+        description = "\n".join(lines)
+    else:
+        description = "本日の閾値超え案件はありません"
+    return {
+        "title": f"利益率ランキング TOP{_DIGEST_TOP_N}",
+        "color": _DIGEST_COLOR_RANKING,
+        "description": description,
+    }
+
+
+def _digest_movers_embed(summary: dict[str, Any]) -> dict[str, Any]:
+    """embed「相場動向」: 中央値の騰落(上昇📈・下落📉)。データが無ければその旨。"""
+    lines: list[str] = []
+    for m in summary.get("movers_up") or []:
+        lines.append(
+            f"📈 {m['display_name']} $ {m['prev_median_usd']} → $ {m['median_usd']} "
+            f"(+{m['change_rate']:.1%}, {m['count']}件)"
+        )
+    for m in summary.get("movers_down") or []:
+        # change_rate が負なので :.1% だけで '-x.x%' になる(符号つき)
+        lines.append(
+            f"📉 {m['display_name']} $ {m['prev_median_usd']} → $ {m['median_usd']} "
+            f"({m['change_rate']:.1%}, {m['count']}件)"
+        )
+    description = (
+        "\n".join(lines) if lines else "変動データなし(履歴が2日分たまると表示されます)"
+    )
+    return {"title": "相場動向", "color": _DIGEST_COLOR_MOVERS, "description": description}
+
+
+def build_digest_messages(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    """summary から Discord Webhook ペイロードの列を組み立てる(純関数)。
+
+    summary は export.build_summary_payload() の戻り値(= summary.json)。
+    現状は embed 3枚 = 1メッセージだが、Discord の上限(10 embeds/メッセージ)を
+    超えないよう分割して返す契約のため戻り値は list。content は1通目のみ。
+    """
+    embeds = [
+        _digest_summary_embed(summary),
+        _digest_ranking_embed(summary),
+        _digest_movers_embed(summary),
+    ]
+    content = f"📊 CardGap 日次ダイジェスト ({summary['date']})"
+    messages: list[dict[str, Any]] = []
+    for i in range(0, len(embeds), _DISCORD_MAX_EMBEDS):
+        payload: dict[str, Any] = {"embeds": embeds[i : i + _DISCORD_MAX_EMBEDS]}
+        if i == 0:
+            payload["content"] = content
+        messages.append(payload)
+    return messages
+
+
+def send_daily_digest(cfg: Config, conn: sqlite3.Connection, force: bool = False) -> bool:
+    """日次ダイジェストを組み立てて Discord へ送る。
+
+    - force=False かつ config の discord.daily_digest が無効なら何もせず True
+    - Webhook 未設定: 通常はオプション機能としてスキップ(True)。force=True の
+      明示実行では設定漏れをエラーとして False
+    - 送信は全メッセージ 2xx で True。例外/非2xx は _post 内で logger.error して False
+    """
+    if not force and not cfg.get("discord.daily_digest", True):
+        logger.info("discord.daily_digest が無効のためダイジェストをスキップ")
+        return True
+
+    webhook = cfg.discord_webhook_url()
+    if not webhook:
+        if force:
+            logger.error(
+                "Discord webhook が未設定です(DISCORD_WEBHOOK_URL か config.yaml で設定)"
+            )
+            return False
+        logger.info("Discord webhook 未設定のためダイジェストをスキップ")
+        return True
+
+    # summary.json と同じペイロードを共通データソースとして使う(循環import回避の遅延import)
+    from . import export
+
+    summary = export.build_summary_payload(cfg, conn)
+    for payload in build_digest_messages(summary):
+        if not _post(webhook, payload):
+            return False
+    logger.info("Discord 日次ダイジェスト送信完了 (%s)", summary["date"])
+    return True

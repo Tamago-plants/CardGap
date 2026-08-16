@@ -2,10 +2,32 @@
 
 eBay の Sold(落札済み)相場と、メルカリ / スニーカーダンク(スニダン)の販売価格を毎日突き合わせ、
 「日本で安く仕入れて eBay で売ると利益が出るカード」を検出して Discord に通知するツール。
+結果は **Web ダッシュボード(GitHub Pages)** で閲覧でき、**Discord 日次ダイジェスト**
+(昨日のまとめ・ランキング・騰落)も毎日届く。
 
 - 対象: ポケモンカード、NARUTO カードゲーム / ナルティメットデータカードダス(カテゴリは追加可能)
-- やること: スクレイプ → 同一カードマッチング → 相場集計 → 損益計算 → ダッシュボード表示 / Discord 通知
+- やること: スクレイプ → 同一カードマッチング → 相場集計 → 損益計算 → Web ダッシュボード表示 / Discord 通知(新着案件 + 日次ダイジェスト)
 - **やらないこと: 自動購入・自動入札・自動出品。検出と通知まで**
+
+## アーキテクチャ
+
+自宅 PC の日次バッチが集計までを行い、結果の JSON を push すると GitHub Actions が
+サイトを再ビルドして GitHub Pages が更新される(サーバ不要のハイブリッド構成)。
+
+```
+自宅PC(日次バッチ: scripts/daily.sh → python -m cardgap.pipeline)
+  ├─ スクレイプ → 相場集計 → 損益計算 → site/public/data/*.json を生成
+  ├─ Discord へ通知(閾値超え案件 + 日次ダイジェスト)
+  └─ JSON を git push(site/public/data のみ)
+        │
+        ▼
+GitHub Actions(.github/workflows/deploy-pages.yml)
+  └─ site/ を npm ci && npm run build
+        │
+        ▼
+GitHub Pages(https://tamago-plants.github.io/CardGap/)
+  └─ React サイト: 案件テーブル・価格推移チャート・日次サマリ
+```
 
 ## ⚠ 利用上の注意
 
@@ -51,6 +73,9 @@ python -m cardgap deals --min-rate 0.3 --min-profit 10000 --psa-only --limit 10
 python -m cardgap notify --test           # Discord疎通テスト
 python -m cardgap notify                  # match相当を実行して閾値超え案件を通知
 python -m cardgap run                     # 日次バッチ一式(= python -m cardgap.pipeline)
+python -m cardgap export                  # サイト用JSON(deals/history/summary)を書き出す
+python -m cardgap export --out /tmp/data  # 出力先を指定(既定: config の export.output_dir)
+python -m cardgap digest                  # Discord日次ダイジェストを今すぐ送る
 ```
 
 共通オプション `--config <path>` で `config.yaml` 以外の設定ファイルを指定できる。
@@ -73,26 +98,73 @@ python -m cardgap.scrape snkrdunk --from-html tests/fixtures/snkrdunk_search_sam
 python -m cardgap.scrape ebay --watchlist --limit 3
 ```
 
-### ダッシュボード
+### ローカルダッシュボード(Streamlit)
 
 ```bash
 streamlit run dashboard/app.py
 ```
 
 案件一覧(フィルタ・ソート)、カード別の eBay 落札履歴チャート、出品の「無視」登録/解除ができる。
+閲覧だけなら Web ダッシュボード(GitHub Pages)でも見られるが、「無視」登録は DB を直接触る
+Streamlit 側でのみ可能。
 
-## cron 設定例
+## Webサイトのセットアップ
 
-毎朝 7:00 に日次バッチを実行し、ログを追記する例(`crontab -e`):
+サイト(`site/`、React + Vite)は GitHub Actions(`.github/workflows/deploy-pages.yml`)が
+ビルドして GitHub Pages で公開する。初回のみ以下の設定が必要:
+
+1. リポジトリを **Public** にする(Settings > General > Change visibility)。
+   GitHub Pages を無料枠で使うための前提
+2. **Settings > Pages > Source** を「**GitHub Actions**」にする
+3. あとは main に push すると自動デプロイされる(`site/**` 配下の変更が対象。
+   日次バッチの JSON push でも再ビルドされる)。公開 URL:
+   **https://tamago-plants.github.io/CardGap/**
+4. ローカル開発: `cd site && npm install && npm run dev`
+   (`python -m cardgap export` を先に実行しておくと実データで確認できる)
+
+## 日次実行のセットアップ
+
+日次バッチは `scripts/daily.sh`(Mac / Linux)/ `scripts/daily.ps1`(Windows)経由で実行する。
+どちらも「`git pull --rebase` → `python -m cardgap.pipeline` → `site/public/data` の差分を
+commit & push」まで行う(push を受けて GitHub Actions がサイトを自動デプロイする)。
+`.venv` があれば自動で有効化するので、venv のフルパス指定は不要。
+
+- バッチの流れ: watchlist 取込 → 為替更新 → eBay / メルカリ / スニダン スクレイプ →
+  相場集計 + 損益計算(`matches` 再構築) → Discord 通知(新着案件 + 日次ダイジェスト) →
+  サイト用 JSON エクスポート。1 ソースが全滅しても他ソースは続行する
+- 失敗時は非 0 で終了し、ログに `ERROR:` 行が出る(cron の `MAILTO` を設定していればメールでも気づける)
+
+### cron(Mac / Linux)
+
+毎朝 7:00 に実行し、ログを追記する例(`crontab -e`):
 
 ```cron
-0 7 * * * cd /path/to/CardGap && DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/XXXX/YYYY" .venv/bin/python -m cardgap.pipeline >> cardgap_cron.log 2>&1
+0 7 * * * /path/to/CardGap/scripts/daily.sh >> ~/cardgap_cron.log 2>&1
 ```
 
-- cron は venv を知らないため、`.venv/bin/python` をフルパス指定で呼ぶ
-- `DISCORD_WEBHOOK_URL` はコマンド行の先頭で渡す(またはラッパースクリプト内で export)
-- バッチの流れ: watchlist 取込 → 為替更新 → eBay / メルカリ / スニダン スクレイプ →
-  相場集計 + 損益計算(`matches` 再構築) → Discord 通知。1 ソースが全滅しても他ソースは続行する
+### Windows(タスクスケジューラ)
+
+タスクスケジューラで「タスクの作成」→ トリガー「毎日 7:00」→ 操作「プログラムの開始」で登録:
+
+```
+プログラム/スクリプト: powershell
+引数の追加:            -ExecutionPolicy Bypass -File C:\path\to\CardGap\scripts\daily.ps1
+```
+
+### DISCORD_WEBHOOK_URL の設定
+
+Discord 通知・日次ダイジェストを使う場合は Webhook URL を環境変数で渡す
+(`config.yaml` の `discord.webhook_url` に直接書いてもよいが、環境変数が優先される):
+
+- **cron**: crontab の先頭(コマンド行より上)で変数を定義する
+
+  ```cron
+  DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/XXXX/YYYY
+  0 7 * * * /path/to/CardGap/scripts/daily.sh >> ~/cardgap_cron.log 2>&1
+  ```
+
+- **Windows**: ユーザー環境変数に `DISCORD_WEBHOOK_URL` を追加する
+  (設定 > システム > バージョン情報 > システムの詳細設定 > 環境変数)
 
 ## config.yaml 解説
 
@@ -128,6 +200,12 @@ streamlit run dashboard/app.py
 | | `chromium_executable` | Playwright 同梱以外の Chromium/Chrome を使う場合の実行ファイルパス(環境変数 `CARDGAP_CHROMIUM_PATH` が優先) |
 | `discord` | `webhook_url` | Webhook URL(環境変数 `DISCORD_WEBHOOK_URL` が優先) |
 | | `max_deals_per_message` | 1 メッセージあたりの案件数(Discord 上限の 10 で頭打ち) |
+| | `daily_digest` | 日次ダイジェスト(昨日のまとめ・ランキング・騰落)を送るか。`python -m cardgap digest` は設定に関係なく強制送信 |
+| `export` | `enabled` | サイト用 JSON エクスポートの有効/無効(日次バッチの最後に実行) |
+| | `output_dir` | `deals.json` / `history.json` / `summary.json` の出力先(既定 `site/public/data`) |
+| | `history_days` | `history.json`(価格推移チャート)に含める日数 |
+| | `top_n` | `summary.json` のランキング(利益率順・利益額順)件数 |
+| | `movers_n` | 騰落(上昇/下落)の表示件数 |
 
 ## データファイル(data/)
 
@@ -268,11 +346,17 @@ python3 -m pytest tests/test_matching.py -q   # 個別実行の例
 ```
 cardgap/
 ├── README.md
-├── config.yaml               # 全設定(手数料率・閾値・ディレイ等)
+├── config.yaml               # 全設定(手数料率・閾値・ディレイ・エクスポート等)
 ├── requirements.txt
 ├── pytest.ini
+├── .github/
+│   └── workflows/
+│       └── deploy-pages.yml  # site/ をビルドして GitHub Pages にデプロイ
+├── scripts/
+│   ├── daily.sh              # 日次バッチ + JSON push(cron から呼ぶ。Mac/Linux)
+│   └── daily.ps1             # 同上(Windows タスクスケジューラ用)
 ├── cardgap/                  # Python パッケージ本体
-│   ├── __main__.py           # メインCLI (initdb/fx/match/deals/notify/run)
+│   ├── __main__.py           # メインCLI (initdb/fx/match/deals/notify/run/export/digest)
 │   ├── config.py             # config.yaml ローダ
 │   ├── models.py             # データ型と confidence 定数
 │   ├── db.py                 # SQLite スキーマ + データアクセス層
@@ -280,8 +364,9 @@ cardgap/
 │   ├── fx.py                 # USD/JPY レート取得
 │   ├── stats.py              # eBay 相場集計(中央値・件数・信頼度)
 │   ├── profit.py             # 損益計算
-│   ├── notify.py             # Discord Webhook 通知
-│   ├── pipeline.py           # 日次バッチ本体(cron から呼ぶ)
+│   ├── notify.py             # Discord Webhook 通知 + 日次ダイジェスト
+│   ├── export.py             # サイト用 JSON エクスポート(deals/history/summary)
+│   ├── pipeline.py           # 日次バッチ本体(scripts/daily.sh から呼ばれる)
 │   ├── matching/             # 同一カード判定
 │   │   ├── engine.py         # confidence 判定ロジック
 │   │   ├── extract.py        # 番号/セット記号/PSAグレード抽出
@@ -293,8 +378,10 @@ cardgap/
 │       ├── ebay.py           # eBay Sold 検索
 │       ├── mercari.py        # メルカリ検索
 │       └── snkrdunk.py       # スニダン検索
+├── site/                     # Webダッシュボード(React + Vite。GitHub Pages で公開)
+│   └── public/data/          # 日次バッチが書き出す deals/history/summary.json
 ├── dashboard/
-│   └── app.py                # Streamlit ダッシュボード
+│   └── app.py                # Streamlit ダッシュボード(ローカル用)
 ├── data/
 │   ├── watchlist.csv         # 監視カード一覧
 │   ├── pokemon_names.csv     # ポケモン日英対訳辞書

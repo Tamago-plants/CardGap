@@ -93,6 +93,29 @@ def cmd_run(args) -> int:
     return 0
 
 
+def cmd_export(args) -> int:
+    from .export import export_site_data
+
+    cfg = load_config(args.config)
+    conn = db.connect(cfg.db_path())
+    written = export_site_data(cfg, conn, out_dir=args.out)
+    conn.close()
+    for p in written:
+        print(p)
+    return 0
+
+
+def cmd_digest(args) -> int:
+    from . import notify
+
+    cfg = load_config(args.config)
+    conn = db.connect(cfg.db_path())
+    ok = notify.send_daily_digest(cfg, conn, force=True)
+    conn.close()
+    print("digest sent" if ok else "digest failed (webhook URL 設定を確認)")
+    return 0 if ok else 1
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(prog="python -m cardgap")
@@ -114,6 +137,11 @@ def main() -> int:
 
     sub.add_parser("run", help="日次バッチ一式")
 
+    p_export = sub.add_parser("export", help="サイト用JSON(deals/history/summary)を書き出す")
+    p_export.add_argument("--out", help="出力先ディレクトリ(既定: config の export.output_dir)")
+
+    sub.add_parser("digest", help="Discord日次ダイジェストを今すぐ送る")
+
     args = parser.parse_args()
     handlers = {
         "initdb": cmd_initdb,
@@ -122,6 +150,8 @@ def main() -> int:
         "deals": cmd_deals,
         "notify": cmd_notify,
         "run": cmd_run,
+        "export": cmd_export,
+        "digest": cmd_digest,
     }
     return handlers[args.command](args)
 

@@ -56,3 +56,12 @@ scrape:
 discord:
   webhook_url: ""                # 環境変数 DISCORD_WEBHOOK_URL が設定されていればそちらを優先
   max_deals_per_message: 10
+  daily_digest: true             # 日次ダイジェスト(昨日のまとめ・ランキング・騰落)を送るか
+
+# サイト(GitHub Pages)用の静的JSONエクスポート
+export:
+  enabled: true
+  output_dir: "site/public/data" # deals.json / history.json / summary.json の出力先
+  history_days: 90               # 価格推移チャートに含める日数
+  top_n: 10                      # summary.json のランキング件数
+  movers_n: 5                    # 騰落(上昇/下落)の表示件数

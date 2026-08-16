@@ -167,6 +167,18 @@ def recompute_matches(
         if market is None:
             continue
 
+        # サイトの価格推移チャート・日次ダイジェストの騰落計算用に蓄積する
+        db.upsert_market_snapshot(
+            conn,
+            card_id=card.id,
+            date=date.today().isoformat(),
+            median_usd=market.median_usd,
+            count=market.count,
+            min_usd=market.min_usd,
+            max_usd=market.max_usd,
+            fx_rate=fx_rate,
+        )
+
         buy_rows = [
             ("mercari", r)
             for r in conn.execute(
@@ -247,6 +259,13 @@ def run_daily(cfg: Optional[Config] = None) -> None:
         from . import notify  # Discord未設定でも他が動くよう遅延import
 
         notify.send_notifications(cfg, conn, deals, all_stats)
+        notify.send_daily_digest(cfg, conn)
+
+        # サイト用JSONを書き出す(この後 scripts/daily.sh が git push する)
+        if bool(cfg.get("export.enabled", True)):
+            from .export import export_site_data
+
+            export_site_data(cfg, conn)
 
         total_failures = sum(s.queries_failed + s.parse_failures for s in all_stats)
         print(

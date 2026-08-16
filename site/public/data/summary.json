@@ -1,0 +1,17 @@
+{
+  "generated_at": null,
+  "date": null,
+  "fx_rate": null,
+  "thresholds": {
+    "min_profit_jpy": 5000,
+    "min_profit_rate": 0.2,
+    "min_sold_count_30d": 3
+  },
+  "deal_count_total": 0,
+  "deal_count_above_threshold": 0,
+  "top_by_rate": [],
+  "top_by_profit": [],
+  "movers_up": [],
+  "movers_down": [],
+  "scrape_health": []
+}
