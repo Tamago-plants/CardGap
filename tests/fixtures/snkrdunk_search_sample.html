@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>リザードン の検索結果 | スニーカーダンク</title>
+</head>
+<body>
+<main>
+  <div class="search-result">
+    <ul class="search-result__list">
+      <!-- 1件目: 生カード商品(桁区切りあり、href のクエリ("?"以降)が落ちること) -->
+      <li class="search-result__item">
+        <a class="item-card" href="/trading-cards/12345?ref=search&amp;rank=1">
+          <img alt="リザードンVSTAR SAR s12a 201/190" src="https://images.snkrdunk.com/trading-cards/12345_1.jpg">
+          <p class="item-card__name">リザードンVSTAR SAR s12a 201/190</p>
+          <p class="item-card__price">¥55,000</p>
+        </a>
+      </li>
+
+      <!-- 2件目: PSA鑑定品は別商品マスタ(全角円記号・空白入り価格) -->
+      <li class="search-result__item">
+        <a class="item-card" href="/trading-cards/23456?ref=search&amp;rank=2">
+          <img alt="リザードンVSTAR SAR s12a 201/190 PSA10" src="https://images.snkrdunk.com/trading-cards/23456_1.jpg">
+          <p class="item-card__name">リザードンVSTAR SAR s12a 201/190 PSA10</p>
+          <p class="item-card__price">￥ 128,000</p>
+        </a>
+      </li>
+
+      <!-- 3件目: 別カードの商品マスタ -->
+      <li class="search-result__item">
+        <a class="item-card" href="/trading-cards/34567?ref=search&amp;rank=3">
+          <img alt="ミュウツーGX 78/94" src="https://images.snkrdunk.com/trading-cards/34567_1.jpg">
+          <p class="item-card__name">ミュウツーGX 78/94</p>
+          <p class="item-card__price">¥8,900</p>
+        </a>
+      </li>
+
+      <!-- スニーカー商品: href が /trading-cards/ を含まない → 列挙されず無視される -->
+      <li class="search-result__item">
+        <a class="item-card" href="/sneakers/99999?ref=search&amp;rank=4">
+          <img alt="Nike Air Jordan 1 Retro High OG" src="https://images.snkrdunk.com/sneakers/99999_1.jpg">
+          <p class="item-card__name">Nike Air Jordan 1 Retro High OG</p>
+          <p class="item-card__price">¥45,000</p>
+        </a>
+      </li>
+
+      <!-- 出品なし商品: 価格が "--" → スキップされる(errors にも積まれない) -->
+      <li class="search-result__item">
+        <a class="item-card" href="/trading-cards/55555?ref=search&amp;rank=5">
+          <img alt="カメックスex sv2a 202/165" src="https://images.snkrdunk.com/trading-cards/55555_1.jpg">
+          <p class="item-card__name">カメックスex sv2a 202/165</p>
+          <p class="item-card__price">--</p>
+        </a>
+      </li>
+
+      <!-- 4件目: 商品名 p が無い → img alt にフォールバック -->
+      <li class="search-result__item">
+        <a class="item-card" href="/trading-cards/45678?ref=search&amp;rank=6">
+          <img alt="ピカチュウ AR s12a 205/190" src="https://images.snkrdunk.com/trading-cards/45678_1.jpg">
+          <p class="item-card__price">¥3,980</p>
+        </a>
+      </li>
+
+      <!-- 壊れたカード: 商品名 p も img alt も無い → parse_failures にカウントされる -->
+      <li class="search-result__item">
+        <a class="item-card" href="/trading-cards/66666?ref=search&amp;rank=7">
+          <img alt="" src="https://images.snkrdunk.com/trading-cards/66666_1.jpg">
+          <p class="item-card__price">¥1,000</p>
+        </a>
+      </li>
+    </ul>
+  </div>
+</main>
+</body>
+</html>

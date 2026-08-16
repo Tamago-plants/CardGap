@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>リザードンの検索結果 - メルカリ</title>
+</head>
+<body>
+<main>
+  <div id="search-result">
+    <ul data-testid="search-item-grid" class="sc-grid">
+      <!-- 1件目: PSA10品(価格に桁区切りあり、alt に「のサムネイル」接尾辞) -->
+      <li data-testid="item-cell" class="sc-item-cell">
+        <div class="merItemThumbnail">
+          <a data-testid="thumbnail-link" href="/item/m12345678901?query_index=0&amp;search_type=keyword">
+            <figure>
+              <img alt="【PSA10】リザードンVSTAR 201/190 s12aのサムネイル" src="https://static.mercdn.net/c!/w=240/thumb/photos/m12345678901_1.jpg">
+            </figure>
+            <span data-testid="thumbnail-item-name" class="itemName">【PSA10】リザードンVSTAR 201/190 s12a</span>
+            <div class="priceContainer">
+              <span class="currency">¥</span><span class="number">39,800</span>
+            </div>
+          </a>
+        </div>
+      </li>
+
+      <!-- 2件目: raw品(alt は接尾辞なし) -->
+      <li data-testid="item-cell" class="sc-item-cell">
+        <div class="merItemThumbnail">
+          <a data-testid="thumbnail-link" href="/item/m23456789012?query_index=1&amp;search_type=keyword">
+            <figure>
+              <img alt="リザードンVSTAR 201/190 s12a 美品" src="https://static.mercdn.net/c!/w=240/thumb/photos/m23456789012_1.jpg">
+            </figure>
+            <span data-testid="thumbnail-item-name" class="itemName">リザードンVSTAR 201/190 s12a 美品</span>
+            <div class="priceContainer">
+              <span class="currency">¥</span><span class="number">12,500</span>
+            </div>
+          </a>
+        </div>
+      </li>
+
+      <!-- 3件目: 番号なし品(alt 空 → thumbnail-item-name フォールバックを踏む) -->
+      <li data-testid="item-cell" class="sc-item-cell">
+        <div class="merItemThumbnail">
+          <a data-testid="thumbnail-link" href="/item/m34567890123?query_index=2&amp;search_type=keyword">
+            <figure>
+              <img alt="" src="https://static.mercdn.net/c!/w=240/thumb/photos/m34567890123_1.jpg">
+            </figure>
+            <span data-testid="thumbnail-item-name" class="itemName">ピカチュウ AR 美品</span>
+            <div class="priceContainer">
+              <span class="currency">¥</span><span class="number">1,980</span>
+            </div>
+          </a>
+        </div>
+      </li>
+
+      <!-- 4件目: PSA10品(番号あり) -->
+      <li data-testid="item-cell" class="sc-item-cell">
+        <div class="merItemThumbnail">
+          <a data-testid="thumbnail-link" href="/item/m45678901234?query_index=3&amp;search_type=keyword">
+            <figure>
+              <img alt="ミュウツーGX 78/94 PSA10のサムネイル" src="https://static.mercdn.net/c!/w=240/thumb/photos/m45678901234_1.jpg">
+            </figure>
+            <span data-testid="thumbnail-item-name" class="itemName">ミュウツーGX 78/94 PSA10</span>
+            <div class="priceContainer">
+              <span class="currency">¥</span><span class="number">25,000</span>
+            </div>
+          </a>
+        </div>
+      </li>
+
+      <!-- 5件目: カードダス系(No.形式の番号、raw品) -->
+      <li data-testid="item-cell" class="sc-item-cell">
+        <div class="merItemThumbnail">
+          <a data-testid="thumbnail-link" href="/item/m56789012345?query_index=4&amp;search_type=keyword">
+            <figure>
+              <img alt="ナルティメットデータカードダス うずまきナルト No.25のサムネイル" src="https://static.mercdn.net/c!/w=240/thumb/photos/m56789012345_1.jpg">
+            </figure>
+            <span data-testid="thumbnail-item-name" class="itemName">ナルティメットデータカードダス うずまきナルト No.25</span>
+            <div class="priceContainer">
+              <span class="currency">¥</span><span class="number">3,500</span>
+            </div>
+          </a>
+        </div>
+      </li>
+
+      <!-- 6件目: タイトルに金額(定価¥3,000)を含む品。価格要素の ¥12,500 を
+           採用しなければならない(セル全文の最初の¥を拾う実装だと 3000 に誤る) -->
+      <li data-testid="item-cell" class="sc-item-cell">
+        <div class="merItemThumbnail">
+          <a data-testid="thumbnail-link" href="/item/m78901234567?query_index=6&amp;search_type=keyword">
+            <figure>
+              <img alt="定価¥3,000 リザードンVSTAR 201/190 未開封のサムネイル" src="https://static.mercdn.net/c!/w=240/thumb/photos/m78901234567_1.jpg">
+            </figure>
+            <span data-testid="thumbnail-item-name" class="itemName">定価¥3,000 リザードンVSTAR 201/190 未開封</span>
+            <div class="priceContainer">
+              <span class="currency">¥</span><span class="number">12,500</span>
+            </div>
+          </a>
+        </div>
+      </li>
+
+      <!-- 7件目: 壊れたセル(価格要素なし → parse_failures にカウントされる) -->
+      <li data-testid="item-cell" class="sc-item-cell">
+        <div class="merItemThumbnail">
+          <a data-testid="thumbnail-link" href="/item/m67890123456?query_index=5&amp;search_type=keyword">
+            <figure>
+              <img alt="壊れたセル サンプルのサムネイル" src="https://static.mercdn.net/c!/w=240/thumb/photos/m67890123456_1.jpg">
+            </figure>
+            <span data-testid="thumbnail-item-name" class="itemName">壊れたセル サンプル</span>
+            <!-- priceContainer が描画されていないケース -->
+          </a>
+        </div>
+      </li>
+    </ul>
+  </div>
+</main>
+</body>
+</html>

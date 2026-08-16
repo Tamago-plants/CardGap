@@ -1,0 +1,56 @@
+# CardGap 設定ファイル
+# 手数料率・為替・閾値はすべてここで変更できます。
+
+app:
+  db_path: "cardgap.db"          # SQLite ファイル(cardgap/ ディレクトリからの相対パス)
+  log_level: "INFO"
+
+# カテゴリ定義。watchlist.csv の category 列と対応する。
+categories:
+  pokemon:
+    enabled: true
+    names_csv: "data/pokemon_names.csv"   # 日英対訳辞書
+    snkrdunk: true                        # スニダンに商品マスタがあるカテゴリのみ true
+  naruto:                                 # NARUTOカードゲーム / ナルティメットデータカードダス
+    enabled: true
+    names_csv: "data/naruto_names.csv"
+    snkrdunk: false                       # スニダンはトレカ=ポケカ等のみ。ナルトは対象外
+
+fx:
+  api_url: "https://open.er-api.com/v6/latest/USD"  # 無料・キー不要
+  conversion_margin: 0.02        # Payoneer等の為替マージン 2%
+  fallback_rate: 150.0           # API失敗かつDBにレートが無い場合の最終フォールバック
+
+ebay_fees:
+  final_value_fee: 0.1325        # トレカカテゴリ FVF 13.25%
+  per_order_fee_usd: 0.30
+  international_fee: 0.0135      # 日本セラーの海外決済手数料 1.35%
+  promoted_listing: 0.02         # 広告費想定。使わないなら 0 に
+
+shipping:
+  default_out_jpy: 2500          # eLogi/FedEx想定の平均送料。買い手負担にするなら 0
+
+buy_side:
+  mercari_fee_rate: 0            # メルカリ購入側手数料なし
+  mercari_shipping_jpy: 0        # 送料込み前提。着払い等を織り込むならここに加算
+  snkrdunk_buyer_fee_rate: 0.055 # スニダン購入手数料(要実額確認。変わったらここを直す)
+  snkrdunk_shipping_jpy: 1000
+
+threshold:
+  min_profit_jpy: 5000
+  min_profit_rate: 0.20
+  min_sold_count_30d: 3          # eBay直近30日の落札件数がこれ未満なら相場信頼度 low
+
+scrape:
+  delay_min_s: 2.0               # リクエスト間のランダムディレイ下限(秒)
+  delay_max_s: 5.0               # 同上限
+  max_retries: 2                 # 失敗時リトライ回数
+  max_ebay_queries_per_day: 50   # eBay検索は1日この件数まで(bot検知対策)
+  ebay_lookback_days: 30         # 相場集計の対象期間
+  headless: true
+  timeout_ms: 30000
+  debug_html_dir: ""             # 空以外にすると取得HTMLをそのディレクトリに保存(セレクタ調査用)
+
+discord:
+  webhook_url: ""                # 環境変数 DISCORD_WEBHOOK_URL が設定されていればそちらを優先
+  max_deals_per_message: 10

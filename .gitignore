@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+cardgap.db
+cardgap.db-journal
+*.log
+.pytest_cache/
+debug_html/
