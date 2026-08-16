@@ -206,6 +206,7 @@ Discord 通知・日次ダイジェストを使う場合は Webhook URL を環�
 | | `history_days` | `history.json`(価格推移チャート)に含める日数 |
 | | `top_n` | `summary.json` のランキング(利益率順・利益額順)件数 |
 | | `movers_n` | 騰落(上昇/下落)の表示件数 |
+| | `site_url` | Discord 日次ダイジェストに載せるダッシュボードの URL(空なら省略) |
 
 ## データファイル(data/)
 

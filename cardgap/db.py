@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS listings_mercari (
     match_confidence TEXT NOT NULL DEFAULT 'none',
     raw_query        TEXT,
     scraped_at       TEXT NOT NULL,
+    first_seen_at    TEXT,               -- 初めて観測した日時(サイトの NEW バッジ用)
     active           INTEGER NOT NULL DEFAULT 1
 );
 
@@ -75,7 +76,8 @@ CREATE TABLE IF NOT EXISTS listings_snkrdunk (
     image_url        TEXT,
     match_confidence TEXT NOT NULL DEFAULT 'none',
     raw_query        TEXT,
-    scraped_at       TEXT NOT NULL
+    scraped_at       TEXT NOT NULL,
+    first_seen_at    TEXT                -- 初めて観測した日時(サイトの NEW バッジ用)
 );
 
 -- 毎回のパイプライン実行で全削除→再構築する「計算結果」テーブル
@@ -173,7 +175,17 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """CREATE TABLE IF NOT EXISTS では反映されない既存DBへの列追加。"""
+    for table in ("listings_mercari", "listings_snkrdunk"):
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if "first_seen_at" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN first_seen_at TEXT")
+    conn.commit()
 
 
 # ---------------------------------------------------------------- cards
@@ -323,11 +335,12 @@ def upsert_mercari(conn: sqlite3.Connection, items: Iterable[MercariListing]) ->
             f"""
             INSERT INTO listings_mercari
                 (card_id, title, price_jpy, condition, image_url, listing_url,
-                 listed_at, match_confidence, raw_query, scraped_at, active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                 listed_at, match_confidence, raw_query, scraped_at, first_seen_at, active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(listing_url) DO UPDATE SET
                 price_jpy = excluded.price_jpy,
                 scraped_at = excluded.scraped_at,
+                first_seen_at = COALESCE(listings_mercari.first_seen_at, excluded.first_seen_at),
                 active = 1,
                 card_id = CASE WHEN {better} THEN excluded.card_id
                           ELSE listings_mercari.card_id END,
@@ -336,7 +349,7 @@ def upsert_mercari(conn: sqlite3.Connection, items: Iterable[MercariListing]) ->
             """,
             (
                 it.card_id, it.title, it.price_jpy, it.condition, it.image_url,
-                it.listing_url, it.listed_at, it.match_confidence, it.raw_query, now,
+                it.listing_url, it.listed_at, it.match_confidence, it.raw_query, now, now,
             ),
         )
         n += 1
@@ -378,11 +391,12 @@ def upsert_snkrdunk(conn: sqlite3.Connection, items: Iterable[SnkrdunkListing]) 
             f"""
             INSERT INTO listings_snkrdunk
                 (card_id, product_name, min_price_jpy, product_url, image_url,
-                 match_confidence, raw_query, scraped_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 match_confidence, raw_query, scraped_at, first_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(product_url) DO UPDATE SET
                 min_price_jpy = excluded.min_price_jpy,
                 scraped_at = excluded.scraped_at,
+                first_seen_at = COALESCE(listings_snkrdunk.first_seen_at, excluded.first_seen_at),
                 card_id = CASE WHEN {better} THEN excluded.card_id
                           ELSE listings_snkrdunk.card_id END,
                 match_confidence = CASE WHEN {better} THEN excluded.match_confidence
@@ -390,7 +404,7 @@ def upsert_snkrdunk(conn: sqlite3.Connection, items: Iterable[SnkrdunkListing]) 
             """,
             (
                 it.card_id, it.product_name, it.min_price_jpy, it.product_url,
-                it.image_url, it.match_confidence, it.raw_query, now,
+                it.image_url, it.match_confidence, it.raw_query, now, now,
             ),
         )
         n += 1
@@ -454,7 +468,8 @@ def list_deals(
         SELECT m.*, c.category, c.name_ja AS card_name, c.name_en, c.set_code,
                c.card_number, c.psa_grade,
                l.{title_col} AS title, l.{price_col} AS buy_price_jpy,
-               l.{url_col} AS listing_url, l.image_url AS image_url
+               l.{url_col} AS listing_url, l.image_url AS image_url,
+               l.first_seen_at AS first_seen_at
         FROM matches m
         JOIN cards c ON c.id = m.card_id
         JOIN {table} l ON l.id = m.source_listing_id

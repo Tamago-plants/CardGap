@@ -432,3 +432,31 @@ def test_latest_scrape_runs_returns_latest_per_source(conn):
     assert ebay["queries_total"] == 20
     assert ebay["notes"] == "new"
     assert rows[1]["id"] == r3
+
+
+def test_new_export_fields_first_seen_and_profit_model(conn):
+    """サイト刷新で追加した first_seen_at / profit_model / site_url の出力確認。"""
+    _, psa = _seed_cards_and_history(conn)
+    deal = _make_mercari_deal(conn, psa, URL_A, buy_price_jpy=5000, profit_rate=0.4)
+    db.rebuild_matches(conn, [deal])
+
+    cfg = Config(
+        {
+            "threshold": {"min_profit_jpy": 5000, "min_profit_rate": 0.20, "min_sold_count_30d": 3},
+            "export": {"site_url": "https://example.com/CardGap/"},
+            "fx": {"conversion_margin": 0.02},
+            "ebay_fees": {"final_value_fee": 0.1325},
+            "buy_side": {"snkrdunk_buyer_fee_rate": 0.055, "snkrdunk_shipping_jpy": 1000},
+        }
+    )
+    deals = export.build_deals_payload(cfg, conn)["deals"]
+    # upsert_mercari 経由で入れた出品には first_seen_at が付く
+    assert deals[0]["first_seen_at"] is not None
+
+    summary = export.build_summary_payload(cfg, conn)
+    assert summary["site_url"] == "https://example.com/CardGap/"
+    pm = summary["profit_model"]
+    assert pm["conversion_margin"] == 0.02
+    assert pm["final_value_fee"] == 0.1325
+    assert pm["buy"]["snkrdunk"]["fee_rate"] == 0.055
+    assert pm["buy"]["mercari"]["fee_rate"] == 0.0  # 既定値で埋まる

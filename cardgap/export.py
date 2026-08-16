@@ -73,6 +73,7 @@ def _deal_to_json(r: dict[str, Any]) -> dict[str, Any]:
         "profit_rate": r["profit_rate"],
         "fx_rate": r["fx_rate"],
         "computed_at": r["computed_at"],
+        "first_seen_at": r["first_seen_at"],  # サイトの NEW バッジ用(初観測日時)
     }
 
 
@@ -183,11 +184,32 @@ def build_summary_payload(cfg: Config, conn: sqlite3.Connection) -> dict[str, An
     return {
         "generated_at": _now_iso(),
         "date": date.today().isoformat(),
+        "site_url": cfg.get("export.site_url", "") or None,  # Discordダイジェストのリンク用
         "fx_rate": db.latest_fx_rate(conn),
         "thresholds": {
             "min_profit_jpy": min_profit,
             "min_profit_rate": min_rate,
             "min_sold_count_30d": int(cfg.get("threshold.min_sold_count_30d", 3)),
+        },
+        # サイト側の What-if 損益シミュレータ用。Python 側 profit.py と同じ式を
+        # クライアントで再現するためのパラメータ一式
+        "profit_model": {
+            "conversion_margin": float(cfg.get("fx.conversion_margin", 0.02)),
+            "final_value_fee": float(cfg.get("ebay_fees.final_value_fee", 0.1325)),
+            "per_order_fee_usd": float(cfg.get("ebay_fees.per_order_fee_usd", 0.30)),
+            "international_fee": float(cfg.get("ebay_fees.international_fee", 0.0135)),
+            "promoted_listing": float(cfg.get("ebay_fees.promoted_listing", 0.02)),
+            "ship_out_jpy": float(cfg.get("shipping.default_out_jpy", 2500)),
+            "buy": {
+                "mercari": {
+                    "fee_rate": float(cfg.get("buy_side.mercari_fee_rate", 0.0)),
+                    "shipping_jpy": float(cfg.get("buy_side.mercari_shipping_jpy", 0)),
+                },
+                "snkrdunk": {
+                    "fee_rate": float(cfg.get("buy_side.snkrdunk_buyer_fee_rate", 0.055)),
+                    "shipping_jpy": float(cfg.get("buy_side.snkrdunk_shipping_jpy", 1000)),
+                },
+            },
         },
         "deal_count_total": len(all_rows),
         "deal_count_above_threshold": len(above),

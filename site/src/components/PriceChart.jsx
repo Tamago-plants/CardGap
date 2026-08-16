@@ -1,238 +1,162 @@
-// 価格推移チャート(手書きSVGの単系列ラインチャート)。
-// 設計規約:
-//   - 線は 2px(round join/cap)、系列色は #4269d0 の1色のみ
-//   - データ点は r=4 の描画 + 半径12の透明ヒット領域(当たり判定 24px ≥ 8px)
-//   - 単系列なので凡例なし。グリッドは薄い水平線のみ、軸テキストは控えめな色
-//   - ホバーで縦クロスヘア + ツールチップ(日付・中央値$・件数)。キーボード
-//     フォーカスでも同じ情報を出す
-//   - y軸は0起点にせずデータ範囲+余白。軸ラベルに $ を明記
-//   - データが2点未満なら「履歴がたまると表示されます」のプレースホルダ
+// 価格チャート(手書きSVG)。中央値ライン2px + min〜max帯(落札レンジ)を上段、
+// 日次販売数のミニバーを別チャートとして下段に描く(2軸チャートは使わない)。
+// クロスヘア + ツールチップは上段のポインタ操作で両方の値を表示する。
 import { useMemo, useRef, useState } from "react";
-import { fmtDateShort, fmtUsd } from "../format.js";
+import { fmtDateShort, fmtUsd } from "../lib/format.js";
 
-// viewBox 座標系(レンダリングは width:100% で拡縮)
-const VIEW_W = 640;
-const VIEW_H = 260;
-const MARGIN = { top: 12, right: 16, bottom: 28, left: 56 };
+const VBW = 560; // viewBox幅(表示はCSSで100%スケール)
+const MAIN_H = 190;
+const BAR_H = 56;
+const PAD = { l: 46, r: 12, t: 10, b: 20 };
 
-const SERIES_COLOR = "#4269d0";
-
-/** min〜max を count 個程度の「切りのいい」目盛りに割る */
-function niceTicks(min, max, count = 4) {
-  const range = max - min;
-  if (range <= 0) return [min];
-  const rawStep = range / count;
-  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
-  const norm = rawStep / mag;
-  const step = (norm >= 5 ? 10 : norm >= 2 ? 5 : norm >= 1 ? 2 : 1) * mag;
-  const ticks = [];
-  for (let t = Math.ceil(min / step) * step; t <= max + 1e-9; t += step) {
-    ticks.push(Number(t.toFixed(6)));
-  }
-  return ticks;
+/** 切りのいい目盛り値を作る */
+function niceTicks(min, max, n = 4) {
+  if (!(max > min)) return [min];
+  const span = max - min;
+  const step0 = span / n;
+  const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= n) || mag * 10;
+  const start = Math.ceil(min / step) * step;
+  const out = [];
+  for (let v = start; v <= max + 1e-9; v += step) out.push(v);
+  return out;
 }
 
 export default function PriceChart({ points }) {
   const wrapRef = useRef(null);
-  const [hoverIdx, setHoverIdx] = useState(null);
+  const [hover, setHover] = useState(null); // {i, px, py}
 
-  // 座標計算(points が変わらない限り再計算しない)
-  const geom = useMemo(() => {
+  const model = useMemo(() => {
     if (!points || points.length < 2) return null;
-
-    const plotW = VIEW_W - MARGIN.left - MARGIN.right;
-    const plotH = VIEW_H - MARGIN.top - MARGIN.bottom;
-
-    // x: 日付を実時間軸で配置(欠測日があっても間隔が正しく出る)
-    const times = points.map((p) => new Date(p.date + "T00:00:00Z").getTime());
-    const tMin = Math.min(...times);
-    const tMax = Math.max(...times);
-    const tSpan = tMax - tMin || 1; // 同一日だけの場合のゼロ割ガード
-
-    // y: データ範囲 + 上下8%の余白(0起点にしない)
-    const values = points.map((p) => p.median_usd);
-    let yMin = Math.min(...values);
-    let yMax = Math.max(...values);
-    if (yMax === yMin) {
-      // 全点同値でも線が中央に描けるように上下に幅を持たせる
-      const pad = Math.abs(yMin) * 0.1 || 1;
-      yMin -= pad;
-      yMax += pad;
-    } else {
-      const pad = (yMax - yMin) * 0.08;
-      yMin -= pad;
-      yMax += pad;
-    }
-
-    const xAt = (t) => MARGIN.left + ((t - tMin) / tSpan) * plotW;
-    const yAt = (v) => MARGIN.top + (1 - (v - yMin) / (yMax - yMin)) * plotH;
-
-    const coords = points.map((p, i) => ({
-      x: xAt(times[i]),
-      y: yAt(p.median_usd),
-      point: p,
-    }));
-
-    const path = coords
-      .map((c, i) => `${i === 0 ? "M" : "L"}${c.x.toFixed(2)},${c.y.toFixed(2)}`)
-      .join(" ");
-
-    const yTicks = niceTicks(yMin, yMax, 4).map((v) => ({ v, y: yAt(v) }));
-
-    // x軸ラベル: 最大6個を等間隔のインデックスで採用
-    const labelCount = Math.min(6, points.length);
-    const idxs = new Set();
-    for (let i = 0; i < labelCount; i++) {
-      idxs.add(Math.round((i * (points.length - 1)) / (labelCount - 1 || 1)));
-    }
-    const xTicks = [...idxs].map((i) => ({ x: coords[i].x, label: fmtDateShort(points[i].date) }));
-
-    return { coords, path, yTicks, xTicks, plotH };
+    const w = VBW - PAD.l - PAD.r;
+    const h = MAIN_H - PAD.t - PAD.b;
+    const lo = Math.min(...points.map((p) => p.min_usd ?? p.median_usd));
+    const hi = Math.max(...points.map((p) => p.max_usd ?? p.median_usd));
+    const span = hi - lo || 1;
+    const yLo = lo - span * 0.06;
+    const yHi = hi + span * 0.06;
+    const x = (i) => PAD.l + (w * i) / (points.length - 1);
+    const y = (v) => PAD.t + h * (1 - (v - yLo) / (yHi - yLo));
+    const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.median_usd).toFixed(1)}`).join("");
+    const bandTop = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.max_usd ?? p.median_usd).toFixed(1)}`).join("");
+    const bandBottom = points
+      .slice()
+      .reverse()
+      .map((p, ri) => {
+        const i = points.length - 1 - ri;
+        return `L${x(i).toFixed(1)},${y(p.min_usd ?? p.median_usd).toFixed(1)}`;
+      })
+      .join("");
+    const yTicks = niceTicks(yLo, yHi, 4);
+    // X軸目盛りは5個程度に間引く
+    const tickEvery = Math.max(1, Math.round(points.length / 5));
+    const xTicks = points.map((p, i) => ({ i, label: fmtDateShort(p.date) })).filter((t) => t.i % tickEvery === 0);
+    const maxCount = Math.max(1, ...points.map((p) => p.count || 0));
+    return { x, y, line, band: bandTop + bandBottom + "Z", yTicks, xTicks, maxCount, yLo, yHi };
   }, [points]);
 
-  if (!geom) {
-    return <div className="chart-placeholder">履歴がたまると表示されます</div>;
+  if (!model) {
+    return <div className="chart-placeholder">価格履歴が2日分未満のためチャートを表示できません</div>;
   }
 
-  const { coords, path, yTicks, xTicks } = geom;
+  const { x, y, line, band, yTicks, xTicks, maxCount } = model;
+  const n = points.length;
 
-  // ポインタ位置 → 最寄りのデータ点(クロスヘアはXにスナップする)
-  const handleMove = (e) => {
-    const svg = e.currentTarget;
-    const rect = svg.getBoundingClientRect();
-    if (rect.width === 0) return;
-    const vx = ((e.clientX - rect.left) / rect.width) * VIEW_W;
-    let best = 0;
-    let bestDist = Infinity;
-    coords.forEach((c, i) => {
-      const d = Math.abs(c.x - vx);
-      if (d < bestDist) {
-        bestDist = d;
-        best = i;
-      }
-    });
-    setHoverIdx(best);
+  const onMove = (e) => {
+    const rect = wrapRef.current.getBoundingClientRect();
+    const vx = ((e.clientX - rect.left) / rect.width) * VBW;
+    const t = (vx - PAD.l) / (VBW - PAD.l - PAD.r);
+    const i = Math.max(0, Math.min(n - 1, Math.round(t * (n - 1))));
+    setHover({ i, leftPct: (x(i) / VBW) * 100 });
   };
 
-  const hover = hoverIdx != null ? coords[hoverIdx] : null;
-  // ツールチップは右端40%で左側にフリップ
-  const flip = hover && hover.x > VIEW_W * 0.6;
+  const hp = hover ? points[hover.i] : null;
+  const barW = Math.min(12, ((VBW - PAD.l - PAD.r) / n) * 0.62);
 
   return (
-    <div className="chart-wrap" ref={wrapRef}>
-      <svg
-        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-        role="img"
-        aria-label="eBay中央値の価格推移チャート"
-        onMouseMove={handleMove}
-        onMouseLeave={() => setHoverIdx(null)}
-      >
-        {/* 水平グリッド(薄いヘアライン)と y軸ラベル($明記) */}
-        {yTicks.map((t) => (
-          <g key={t.v}>
-            <line
-              x1={MARGIN.left}
-              x2={VIEW_W - MARGIN.right}
-              y1={t.y}
-              y2={t.y}
-              stroke="var(--grid)"
-              strokeWidth="1"
-            />
-            <text
-              x={MARGIN.left - 8}
-              y={t.y + 4}
-              textAnchor="end"
-              fontSize="11"
-              fill="var(--text-muted)"
-            >
-              {fmtUsd(t.v, t.v >= 100 ? 0 : 1)}
+    <div className="chart-block" ref={wrapRef} onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
+      <div className="chart-legend">
+        <span className="lk">
+          <span className="lk-line" aria-hidden="true" />
+          中央値
+        </span>
+        <span className="lk">
+          <span className="lk-band" aria-hidden="true" />
+          落札レンジ(min〜max)
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${VBW} ${MAIN_H}`} role="img" aria-label="eBay落札価格の推移チャート">
+        {/* グリッド + Y目盛 */}
+        {yTicks.map((v) => (
+          <g key={v}>
+            <line x1={PAD.l} x2={VBW - PAD.r} y1={y(v)} y2={y(v)} stroke="var(--chart-grid)" strokeWidth="1" />
+            <text x={PAD.l - 6} y={y(v) + 3.5} textAnchor="end" fontSize="10" fill="var(--muted)" style={{ fontVariantNumeric: "tabular-nums" }}>
+              ${v >= 100 ? Math.round(v) : v}
             </text>
           </g>
         ))}
-
-        {/* x軸ラベル(日付、控えめな色) */}
-        {xTicks.map((t, i) => (
-          <text
-            key={i}
-            x={t.x}
-            y={VIEW_H - 8}
-            textAnchor="middle"
-            fontSize="11"
-            fill="var(--text-muted)"
-          >
+        {/* X目盛 */}
+        {xTicks.map((t) => (
+          <text key={t.i} x={x(t.i)} y={MAIN_H - 5} textAnchor="middle" fontSize="10" fill="var(--muted)">
             {t.label}
           </text>
         ))}
-
-        {/* クロスヘア(ホバー中のみ) */}
+        {/* レンジ帯(同一系列色の10%ウォッシュ) */}
+        <path d={band} fill="var(--accent)" opacity="0.13" />
+        {/* 中央値ライン */}
+        <path d={line} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {/* クロスヘア */}
         {hover && (
-          <line
-            x1={hover.x}
-            x2={hover.x}
-            y1={MARGIN.top}
-            y2={VIEW_H - MARGIN.bottom}
-            stroke="var(--text-muted)"
-            strokeWidth="1"
-          />
+          <g>
+            <line x1={x(hover.i)} x2={x(hover.i)} y1={PAD.t} y2={MAIN_H - PAD.b} stroke="var(--chart-axis)" strokeWidth="1" />
+            <circle cx={x(hover.i)} cy={y(points[hover.i].median_usd)} r="4.5" fill="var(--surface)" />
+            <circle cx={x(hover.i)} cy={y(points[hover.i].median_usd)} r="3" fill="var(--accent)" />
+          </g>
         )}
-
-        {/* 系列ライン: 2px round */}
-        <path
-          d={path}
-          fill="none"
-          stroke={SERIES_COLOR}
-          strokeWidth="2"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-
-        {/* データ点: 白リング付き r=4。ホバー中の点は少し大きく */}
-        {coords.map((c, i) => (
-          <circle
-            key={i}
-            cx={c.x}
-            cy={c.y}
-            r={hoverIdx === i ? 5 : 4}
-            fill={SERIES_COLOR}
-            stroke="var(--surface)"
-            strokeWidth="2"
-          />
-        ))}
-
-        {/* 透明ヒット領域(半径12 = 直径24pxの当たり判定)。
-            キーボードフォーカスでもツールチップを出す */}
-        {coords.map((c, i) => (
-          <circle
-            key={`hit-${i}`}
-            cx={c.x}
-            cy={c.y}
-            r="12"
-            fill="transparent"
-            tabIndex="0"
-            aria-label={`${c.point.date} 中央値 ${fmtUsd(c.point.median_usd)} ${c.point.count}件`}
-            style={{ outline: "none" }}
-            onFocus={() => setHoverIdx(i)}
-            onBlur={() => setHoverIdx(null)}
-          />
-        ))}
+        {/* ベースライン */}
+        <line x1={PAD.l} x2={VBW - PAD.r} y1={MAIN_H - PAD.b} y2={MAIN_H - PAD.b} stroke="var(--chart-axis)" strokeWidth="1" />
       </svg>
 
-      {/* ツールチップ(値が主役、ラベルは従属) */}
-      {hover && (
+      <div className="mini-title">日次販売数(件)</div>
+      <svg viewBox={`0 0 ${VBW} ${BAR_H}`} role="img" aria-label="日次販売数のミニバーチャート">
+        {points.map((p, i) => {
+          const bh = ((BAR_H - 14) * (p.count || 0)) / maxCount;
+          return (
+            <rect
+              key={i}
+              x={x(i) - barW / 2}
+              y={BAR_H - 2 - bh}
+              width={barW}
+              height={Math.max(bh, p.count ? 1.5 : 0)}
+              rx="1.5"
+              fill="var(--accent)"
+              opacity={hover && hover.i === i ? 0.95 : 0.5}
+            />
+          );
+        })}
+        <line x1={PAD.l} x2={VBW - PAD.r} y1={BAR_H - 2} y2={BAR_H - 2} stroke="var(--chart-axis)" strokeWidth="1" />
+        {/* 最大値の目安ラベル */}
+        <text x={PAD.l - 6} y={12} textAnchor="end" fontSize="9.5" fill="var(--muted)" style={{ fontVariantNumeric: "tabular-nums" }}>
+          {maxCount}
+        </text>
+      </svg>
+
+      {hover && hp && (
         <div
           className="chart-tooltip"
           style={{
-            left: `${(hover.x / VIEW_W) * 100}%`,
-            top: `${(hover.y / VIEW_H) * 100}%`,
-            transform: flip
-              ? "translate(calc(-100% - 12px), -50%)"
-              : "translate(12px, -50%)",
+            left: `min(max(${hover.leftPct}%, 90px), calc(100% - 110px))`,
+            top: 26,
+            transform: "translateX(-50%)",
           }}
         >
-          <div className="tt-value">{fmtUsd(hover.point.median_usd)}</div>
-          <div className="tt-label">
-            {hover.point.date} / {hover.point.count}件
-          </div>
+          <span className="text2">{hp.date}</span>
+          <br />
+          中央値 <b>{fmtUsd(hp.median_usd)}</b>
+          <br />
+          レンジ <b>{fmtUsd(hp.min_usd)}〜{fmtUsd(hp.max_usd)}</b>
+          <br />
+          販売数 <b>{hp.count}件</b>
         </div>
       )}
     </div>

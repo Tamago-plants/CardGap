@@ -300,6 +300,9 @@ def build_digest_messages(summary: dict[str, Any]) -> list[dict[str, Any]]:
         _digest_movers_embed(summary),
     ]
     content = f"📊 CardGap 日次ダイジェスト ({summary['date']})"
+    site_url = summary.get("site_url")
+    if site_url:
+        content += f"\n🔗 ダッシュボード: {site_url}"
     messages: list[dict[str, Any]] = []
     for i in range(0, len(embeds), _DISCORD_MAX_EMBEDS):
         payload: dict[str, Any] = {"embeds": embeds[i : i + _DISCORD_MAX_EMBEDS]}

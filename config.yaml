@@ -62,6 +62,7 @@ discord:
 export:
   enabled: true
   output_dir: "site/public/data" # deals.json / history.json / summary.json の出力先
+  site_url: "https://tamago-plants.github.io/CardGap/"  # Discordダイジェストに載せるリンク
   history_days: 90               # 価格推移チャートに含める日数
   top_n: 10                      # summary.json のランキング件数
   movers_n: 5                    # 騰落(上昇/下落)の表示件数
