@@ -50,6 +50,8 @@ scrape:
   headless: true
   timeout_ms: 30000
   debug_html_dir: ""             # 空以外にすると取得HTMLをそのディレクトリに保存(セレクタ調査用)
+  chromium_executable: ""        # Playwright同梱以外のChromium/Chromeを使う場合の実行ファイルパス
+                                 # (環境変数 CARDGAP_CHROMIUM_PATH が設定されていればそちらを優先)
 
 discord:
   webhook_url: ""                # 環境変数 DISCORD_WEBHOOK_URL が設定されていればそちらを優先

@@ -7,6 +7,7 @@ polite_sleep()(2〜5秒のランダムディレイ)を挟んでから取得す�
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 import time
@@ -44,9 +45,15 @@ def new_page(cfg: Config) -> Iterator["Page"]:  # noqa: F821 (Playwright型は�
     from playwright.sync_api import sync_playwright
 
     headless = bool(cfg.get("scrape.headless", True))
+    # Playwright同梱ブラウザ以外(システムのChrome等)を使う場合の逃げ道。
+    # 環境変数 CARDGAP_CHROMIUM_PATH が config より優先される。
+    executable = os.environ.get("CARDGAP_CHROMIUM_PATH") or cfg.get(
+        "scrape.chromium_executable", ""
+    )
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=headless,
+            executable_path=executable or None,
             args=["--disable-blink-features=AutomationControlled"],
         )
         context = browser.new_context(

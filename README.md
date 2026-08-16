@@ -125,6 +125,7 @@ streamlit run dashboard/app.py
 | | `headless` | ブラウザをヘッドレスで起動するか |
 | | `timeout_ms` | ページ取得タイムアウト |
 | | `debug_html_dir` | 空以外にすると取得 HTML をそのディレクトリに保存(セレクタ調査用) |
+| | `chromium_executable` | Playwright 同梱以外の Chromium/Chrome を使う場合の実行ファイルパス(環境変数 `CARDGAP_CHROMIUM_PATH` が優先) |
 | `discord` | `webhook_url` | Webhook URL(環境変数 `DISCORD_WEBHOOK_URL` が優先) |
 | | `max_deals_per_message` | 1 メッセージあたりの案件数(Discord 上限の 10 で頭打ち) |
 
