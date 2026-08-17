@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS cards (
     card_number   TEXT,
     psa_grade     INTEGER,
     enabled       INTEGER NOT NULL DEFAULT 1,
+    auto_discovered INTEGER NOT NULL DEFAULT 0,  -- シリーズ監視が自動登録したカード
     created_at    TEXT NOT NULL,
     UNIQUE(category, name_en, set_code, card_number, psa_grade)
 );
@@ -191,6 +192,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if "first_seen_at" not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN first_seen_at TEXT")
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(cards)")}
+    if "auto_discovered" not in cols:
+        conn.execute("ALTER TABLE cards ADD COLUMN auto_discovered INTEGER NOT NULL DEFAULT 0")
     conn.commit()
 
 
@@ -207,15 +211,20 @@ def upsert_card(conn: sqlite3.Connection, card: Card) -> int:
         (card.category, card.name_en, card.set_code, card.card_number, card.psa_grade),
     ).fetchone()
     if row:
+        # auto_discovered は「手動(=0)が常に勝つ」: 一度でも watchlist 由来で
+        # 登録されたカードを、後からのシリーズ自動登録が auto に戻さない
         conn.execute(
-            "UPDATE cards SET name_ja = ?, enabled = ? WHERE id = ?",
-            (card.name_ja, 1 if card.enabled else 0, row["id"]),
+            "UPDATE cards SET name_ja = ?, enabled = ?,"
+            " auto_discovered = MIN(auto_discovered, ?) WHERE id = ?",
+            (card.name_ja, 1 if card.enabled else 0,
+             1 if card.auto_discovered else 0, row["id"]),
         )
         return int(row["id"])
     cur = conn.execute(
         """
-        INSERT INTO cards (category, name_ja, name_en, set_code, card_number, psa_grade, enabled, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO cards (category, name_ja, name_en, set_code, card_number, psa_grade,
+                           enabled, auto_discovered, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             card.category,
@@ -225,6 +234,7 @@ def upsert_card(conn: sqlite3.Connection, card: Card) -> int:
             card.card_number,
             card.psa_grade,
             1 if card.enabled else 0,
+            1 if card.auto_discovered else 0,
             utcnow(),
         ),
     )
@@ -241,6 +251,7 @@ def _row_to_card(row: sqlite3.Row) -> Card:
         card_number=row["card_number"],
         psa_grade=row["psa_grade"],
         enabled=bool(row["enabled"]),
+        auto_discovered=bool(row["auto_discovered"]),
     )
 
 

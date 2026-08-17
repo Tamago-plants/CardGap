@@ -16,7 +16,7 @@ from . import db, fx
 from .config import Config, load_config
 from .matching import load_name_dict, match_title
 from .matching.names import NameDict
-from .models import CONF_NONE, Card, Deal, ScrapeStats
+from .models import CONF_HIGH, CONF_NONE, Card, Deal, ScrapeStats
 from .profit import profit_for_source
 from .scrape import browser
 from .stats import compute_market_stats
@@ -46,10 +46,53 @@ def _cards_for_source(cfg: Config, cards: list[Card], source: str) -> list[Card]
     for c in cards:
         if c.category not in cats:
             continue
+        if c.auto_discovered:
+            # シリーズ監視の自動登録カードはシリーズクエリ経由でデータが集まるため
+            # 個別クエリは発行しない(eBay日次上限を食い潰さない)
+            continue
         if source == "snkrdunk" and not (cats[c.category] or {}).get("snkrdunk", False):
             continue
         result.append(c)
     return result
+
+
+def _resolve_series_item(conn: sqlite3.Connection, series_card: Card, title: str) -> Optional[int]:
+    """シリーズ監視のクエリ結果1件を具体カードに解決する。
+
+    タイトルからシリーズ番号(例: DN-001)と PSA グレードを抽出し、
+    (番号, グレード) 単位のカードを自動登録(既存なら再利用)して id を返す。
+    番号が取れない・他言語版明示のタイトルは None(confidence none 扱い)。
+    """
+    from .matching import extract_psa_grade, extract_series_number, is_foreign_language
+
+    if is_foreign_language(title):
+        return None
+    prefix = series_card.series_prefix()
+    if not prefix:
+        return None
+    num = extract_series_number(title, prefix)
+    if num is None:
+        return None
+    grade = extract_psa_grade(title)
+    psa: Optional[int]
+    if grade is None:
+        psa = None
+    elif float(grade).is_integer():
+        psa = int(grade)
+    else:
+        return None  # 8.5等の半グレードは相場が別物になるため対象外
+    number_disp = f"{prefix.upper()}-{num:03d}" if prefix.isascii() else f"{prefix}-{num:03d}"
+    concrete = Card(
+        category=series_card.category,
+        name_ja=series_card.name_ja,
+        name_en=series_card.name_en,
+        set_code=None,
+        card_number=number_disp,
+        psa_grade=psa,
+        enabled=True,
+        auto_discovered=True,
+    )
+    return db.upsert_card(conn, concrete)
 
 
 def run_scrape(
@@ -117,9 +160,21 @@ def run_scrape(
                 stats.errors.extend(parsed.errors[:3])
 
                 nd = name_dicts.get(card.category)
-                for item in parsed.items:
-                    item.card_id = card.id
-                    item.match_confidence = match_title(_item_title(item), card, nd)
+                if card.is_series_watch():
+                    # シリーズ監視: 1クエリでシリーズ全体を取得し、番号ごとの
+                    # 具体カードに振り分ける(番号+グレードが取れたものは high)
+                    for item in parsed.items:
+                        resolved = _resolve_series_item(conn, card, _item_title(item))
+                        if resolved is None:
+                            item.card_id = card.id
+                            item.match_confidence = CONF_NONE
+                        else:
+                            item.card_id = resolved
+                            item.match_confidence = CONF_HIGH
+                else:
+                    for item in parsed.items:
+                        item.card_id = card.id
+                        item.match_confidence = match_title(_item_title(item), card, nd)
 
                 if source == "ebay":
                     db.insert_ebay_sold(conn, parsed.items)
@@ -160,6 +215,8 @@ def recompute_matches(
 
     deals: list[Deal] = []
     for card in db.list_cards(conn):
+        if card.is_series_watch():
+            continue  # シリーズ監視行は仮想行。相場は自動登録された具体カード側に付く
         rows = db.ebay_sold_for_card(conn, card.id, since)
         market = compute_market_stats(
             [r["price_usd"] + r["shipping_usd"] for r in rows], min_count

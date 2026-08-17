@@ -47,7 +47,13 @@ def build_query(card: Card) -> str:
     対象は日本語版のみのため 'Japanese' を必ず入れる(英語版はコレクター番号が
     同一でも別相場。日本語版の出品はほぼ確実にタイトルに Japanese を含む)。
     """
-    parts = [card.name_en, "Japanese", card.set_code, card.card_number]
+    # シリーズ監視(DN-* 等)はプレフィックスのみで検索し、シリーズ全体を1クエリで拾う。
+    # 漢字プレフィックス(忍 等)は海外セラーのタイトルに含まれずヒットを狭めるため
+    # クエリからは外す(番号の絞り込みはマッチング側で行われる)
+    number = card.query_number()
+    if number and not number.isascii():
+        number = None
+    parts = [card.name_en, "Japanese", card.set_code, number]
     query = " ".join(p for p in parts if p)
     if card.psa_grade:
         query += f" PSA {card.psa_grade}"

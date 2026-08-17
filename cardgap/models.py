@@ -18,16 +18,42 @@ RELIABILITY_LOW = "low"  # 直近30日の落札件数が閾値未満
 
 @dataclass
 class Card:
-    """watchlist.csv 1行 = 監視対象カード1件。cards テーブルに対応。"""
+    """watchlist.csv 1行 = 監視対象カード1件。cards テーブルに対応。
+
+    card_number の形式:
+      '201/190'  ポケカ等のコレクター番号
+      'DN-001'   シリーズ番号(ナルティメットデータカードダスの DN/NM/NX、
+                 旧NARUTOカードゲームの 忍-001 など)
+      'DN-*'     シリーズ監視。この1行で「DNシリーズ全体」を1クエリで検索し、
+                 見つかった番号ごとにカードを自動登録して相場を集める
+    """
 
     category: str               # 'pokemon' | 'naruto' | ...
     name_ja: str
     name_en: str
-    set_code: Optional[str]     # 例: 's12a'。ナルト系カードダスは None 可
-    card_number: Optional[str]  # 例: '201/190' や '087'(カードダスのNo.)
+    set_code: Optional[str]     # 例: 's12a'。ナルト系は None
+    card_number: Optional[str]  # 例: '201/190' / 'DN-001' / 'DN-*'
     psa_grade: Optional[int]    # None = 生カード(raw)
     enabled: bool = True
+    auto_discovered: bool = False  # シリーズ監視が自動登録したカード(検索クエリの対象外)
     id: Optional[int] = None
+
+    def series_prefix(self) -> Optional[str]:
+        """シリーズ監視行('DN-*' 等)ならプレフィックス('DN')を返す。それ以外は None。"""
+        if not self.card_number:
+            return None
+        n = self.card_number.strip()
+        if n.endswith("*"):
+            prefix = n[:-1].rstrip("-").strip()
+            return prefix or None
+        return None
+
+    def is_series_watch(self) -> bool:
+        return self.series_prefix() is not None
+
+    def query_number(self) -> Optional[str]:
+        """検索クエリに使う番号表記。シリーズ監視はプレフィックスのみ(例: 'DN')。"""
+        return self.series_prefix() if self.is_series_watch() else self.card_number
 
     def display_name(self) -> str:
         parts = [self.name_ja]

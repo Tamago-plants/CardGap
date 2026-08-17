@@ -57,8 +57,9 @@ def build_query(card: Card) -> str:
     グレードの絞り込みはマッチング側(matching.engine)の PSAグレード条件に任せる。
     """
     parts = [card.name_ja]
-    if card.card_number:
-        parts.append(card.card_number)
+    number = card.query_number()  # シリーズ監視(DN-*)はプレフィックスのみ
+    if number:
+        parts.append(number)
     return " ".join(parts)
 
 

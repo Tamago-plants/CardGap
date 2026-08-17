@@ -45,8 +45,9 @@ def build_query(card: Card) -> str:
     (日本の出品は 'PSA 10' より空白なしの 'PSA10' 表記が多い)。
     """
     parts = [card.name_ja]
-    if card.card_number:
-        parts.append(card.card_number)
+    number = card.query_number()  # シリーズ監視(DN-*)はプレフィックスのみ
+    if number:
+        parts.append(number)
     if card.psa_grade:
         parts.append(f"PSA{card.psa_grade}")
     return " ".join(parts)

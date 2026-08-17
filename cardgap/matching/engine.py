@@ -21,10 +21,11 @@ from .extract import (
     extract_card_number,
     extract_carddass_number,
     extract_psa_grade,
+    extract_series_number,
     extract_set_code,
 )
 from .names import NameDict
-from .normalize import normalize, normalize_card_number
+from .normalize import normalize, normalize_card_number, parse_series_number
 
 # 対象は日本語版のみ。英語版などはコレクター番号が同一でも別相場のため、
 # 他言語であることが明示されたタイトルは問答無用で除外する
@@ -37,6 +38,11 @@ _FOREIGN_LANGUAGE_MARKERS = (
 
 def _is_foreign_language(title_norm: str) -> bool:
     return any(marker in title_norm for marker in _FOREIGN_LANGUAGE_MARKERS)
+
+
+def is_foreign_language(title: str) -> bool:
+    """日本語版以外(英語版等)が明示されたタイトルか。pipeline のシリーズ監視でも使う。"""
+    return _is_foreign_language(normalize(title))
 
 
 def _grade_ok(card: Card, title: str) -> bool:
@@ -54,10 +60,19 @@ def match_title(title: str, card: Card, name_dict: NameDict | None = None) -> st
         return CONF_NONE
 
     card_number = normalize_card_number(card.card_number) if card.card_number else None
-    title_number = extract_card_number(title)
-    if title_number is None and card_number is not None and "/" not in card_number:
-        # カードダス等のスラッシュ無し番号は No.xx 形式で拾う
-        title_number = extract_carddass_number(title)
+
+    series = parse_series_number(card_number) if card_number else None
+    if series:
+        # シリーズ番号(DN-001 / NM-001 / NX-001 / 忍-001 等)は
+        # プレフィックス指定でタイトルから拾って番号を比較する
+        prefix, num = series
+        found = extract_series_number(title, prefix)
+        title_number = f"{prefix}-{found}" if found is not None else None
+    else:
+        title_number = extract_card_number(title)
+        if title_number is None and card_number is not None and "/" not in card_number:
+            # カードダス等のスラッシュ無し番号は No.xx 形式で拾う
+            title_number = extract_carddass_number(title)
 
     title_set = extract_set_code(title)
     card_set = card.set_code.lower() if card.set_code else None
