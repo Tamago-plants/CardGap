@@ -166,3 +166,27 @@ def test_manual_row_wins_over_auto(conn):
                   set_code=None, card_number="DN-001", psa_grade=None, auto_discovered=False)
     assert db.upsert_card(conn, manual) == cid
     assert db.get_card(conn, cid).auto_discovered is False
+
+
+# ---------------------------------------------------- キーワード監視(BOX/プロモ)
+
+def test_keyword_watch_box_matches_medium():
+    """番号を持たない商品(未開封BOX等)は名前の全語一致で medium。"""
+    box = Card(category="naruto", name_ja="ナルト カードダス BOX 未開封",
+               name_en="Naruto Carddass Box Sealed", set_code=None,
+               card_number=None, psa_grade=None)
+    # 語順が違っても全語含まれていれば一致
+    assert match_title("【未開封】NARUTO ナルト データカードダス BOX シュリンク付", box) == CONF_MEDIUM
+    assert match_title("Naruto Carddass sealed booster box Japanese", box) == CONF_MEDIUM
+    # 一部の語しか無ければ不一致
+    assert match_title("ナルト カードダス DN-001 単品", box) == CONF_NONE
+    assert match_title("ポケモンカード BOX 未開封", box) == CONF_NONE
+    # PSAルールは維持(BOXにPSA表記が付くことは通常ないが、付いたら別物扱い)
+    assert match_title("ナルト カードダス BOX 未開封 PSA10", box) == CONF_NONE
+
+
+def test_keyword_watch_single_token_still_substring():
+    """1語の名前は従来どおり部分一致(挙動が変わっていないこと)。"""
+    card = Card(category="naruto", name_ja="うずまきナルト", name_en="Naruto Uzumaki",
+                set_code=None, card_number="DN-001", psa_grade=None)
+    assert match_title("うずまきナルト 美品 まとめ", card) == CONF_LOW

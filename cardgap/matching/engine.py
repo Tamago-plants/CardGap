@@ -91,7 +91,9 @@ def match_title(title: str, card: Card, name_dict: NameDict | None = None) -> st
     nd = name_dict or NameDict()
     if nd.title_contains_name(title, card.name_ja, card.name_en):
         if card_number is not None and title_number is None:
-            return CONF_LOW
+            return CONF_LOW  # 番号を持つカードなのにタイトルから取れない → 弱い一致
         if card_number is None:
-            return CONF_LOW
+            # 番号を持たない商品(未開封BOX・プロモ等のキーワード監視)は
+            # 名前の完全一致が取り得る最良の判定なので medium 扱い
+            return CONF_MEDIUM
     return CONF_NONE

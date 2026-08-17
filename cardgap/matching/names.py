@@ -18,7 +18,13 @@ class NameDict:
     en_to_ja: dict[str, str] = field(default_factory=dict)
 
     def title_contains_name(self, title: str, name_ja: str, name_en: str) -> bool:
-        """タイトルに日本語名または英語名(またはその対訳)が含まれるか。"""
+        """タイトルに日本語名または英語名(またはその対訳)が含まれるか。
+
+        名前が複数語(空白区切り)の場合は「全語がタイトルに含まれる」判定
+        (語順不問)。未開封ボックス等のキーワード監視
+        (例: 'ナルト カードダス BOX 未開封')は語順どおりに出品されないため。
+        単語1つの名前は従来どおり部分文字列一致。
+        """
         t = normalize(title)
         candidates = {normalize(name_ja), normalize(name_en)}
         # 辞書に登録があれば対訳側も候補に加える(watchlist の表記ゆれ対策)
@@ -28,7 +34,16 @@ class NameDict:
         ja = self.en_to_ja.get(normalize(name_en))
         if ja:
             candidates.add(normalize(ja))
-        return any(c and c in t for c in candidates)
+        for c in candidates:
+            if not c:
+                continue
+            tokens = c.split(" ")
+            if len(tokens) == 1:
+                if c in t:
+                    return True
+            elif all(tok in t for tok in tokens):
+                return True
+        return False
 
 
 def load_name_dict(csv_path: str | Path) -> NameDict:
