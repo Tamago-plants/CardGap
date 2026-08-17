@@ -11,14 +11,15 @@ eBay の Sold(落札済み)相場と、メルカリ / スニーカーダンク(�
 
 ## アーキテクチャ
 
-自宅 PC の日次バッチが集計までを行い、結果の JSON を push すると GitHub Actions が
-サイトを再ビルドして GitHub Pages が更新される(サーバ不要のハイブリッド構成)。
+**クラウド完結**。GitHub Actions が日次バッチを 1 日 4 回実行して DB と JSON を commit し、
+サイトを再ビルドして GitHub Pages が更新される(PC 不要・サーバ不要・運用費 0 円)。
+ローカル PC からの実行(scripts/daily.sh)にもいつでも切り替えられる。
 
 ```
-自宅PC(日次バッチ: scripts/daily.sh → python -m cardgap.pipeline)
-  ├─ スクレイプ → 相場集計 → 損益計算 → site/public/data/*.json を生成
-  ├─ Discord へ通知(閾値超え案件 + 日次ダイジェスト)
-  └─ JSON を git push(site/public/data のみ)
+GitHub Actions(.github/workflows/scrape.yml、JST 7/11/15/19時)
+  ├─ python -m cardgap.pipeline
+  │    スクレイプ → 相場集計 → 損益計算 → Discord通知 → site/public/data/*.json
+  └─ cardgap.db + JSON を commit & push → deploy-pages.yml を起動
         │
         ▼
 GitHub Actions(.github/workflows/deploy-pages.yml)
@@ -26,7 +27,7 @@ GitHub Actions(.github/workflows/deploy-pages.yml)
         │
         ▼
 GitHub Pages(https://tamago-plants.github.io/CardGap/)
-  └─ React サイト: 案件テーブル・価格推移チャート・日次サマリ
+  └─ React サイト: ダッシュボード・ランキング・市場マップ・案件スクリーナー
 ```
 
 ## ⚠ 利用上の注意
@@ -122,7 +123,25 @@ Streamlit 側でのみ可能。
 4. ローカル開発: `cd site && npm install && npm run dev`
    (`python -m cardgap export` を先に実行しておくと実データで確認できる)
 
-## 日次実行のセットアップ
+## 自動実行(クラウド完結・既定)
+
+**PC 不要の運用**。`.github/workflows/scrape.yml` が GitHub Actions 上で日次バッチを
+1 日 4 回(JST 7:00 / 11:00 / 15:00 / 19:00)実行し、`cardgap.db` と `site/public/data`
+を自動 commit → サイト再デプロイまで行う。
+
+- **Discord 通知を使う場合**: リポジトリの Settings > Secrets and variables > Actions >
+  New repository secret で `DISCORD_WEBHOOK_URL` を登録する(日次ダイジェストは 1 日 1 回だけ送信される)
+- **実行回数の変更**: `scrape.yml` の `cron` を編集(UTC 表記。JST−9 時間)。
+  eBay のクエリ上限は DB の実行ログで日単位管理されるため、回数を増やしても上限は超えない
+- **手動実行**: Actions タブ > Scheduled scrape > Run workflow
+- **停止**: Actions タブ > Scheduled scrape > 右上「…」> Disable workflow
+- ⚠ **制約**: GitHub ランナーはデータセンター IP のため、eBay/メルカリの bot 検知に
+  自宅回線より引っかかりやすい。成功率はダッシュボードの収集ステータスと Discord 通知で
+  監視し、失敗が続く場合は下記のローカル実行に切り替える
+- `cardgap.db` は Actions が commit するため追跡対象になっている。ローカルで作業する
+  ときは実行前に `git pull` して最新の DB を取り込むこと
+
+## 日次実行のセットアップ(ローカル実行に切り替える場合)
 
 日次バッチは `scripts/daily.sh`(Mac / Linux)/ `scripts/daily.ps1`(Windows)経由で実行する。
 どちらも「`git pull --rebase` → `python -m cardgap.pipeline` → `site/public/data` の差分を

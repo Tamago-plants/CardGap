@@ -1,0 +1,79 @@
+# クラウド完結運用: GitHub Actions 上で日次バッチ(スクレイプ→集計→通知→JSON出力)を
+# 1日4回実行し、cardgap.db と site/public/data を commit して Pages を再デプロイする。
+#
+# 注意:
+# - GitHub ランナーはデータセンター IP のため、eBay/メルカリの bot 検知に自宅回線より
+#   引っかかりやすい。成功率はダッシュボードの収集ステータスと Discord 通知で監視し、
+#   失敗が続く場合は実行回数を減らすか scripts/daily.sh によるローカル実行へ切り替える
+# - eBay の 1 日クエリ上限(scrape.max_ebay_queries_per_day)は DB の実行ログで
+#   管理しているため、1 日に複数回走っても合計で上限を超えない
+# - Discord 日次ダイジェストは 1 日 1 回だけ送られる(送信済み日付を DB に記録)
+name: Scheduled scrape
+
+on:
+  schedule:
+    # UTC。JST では 7:00 / 11:00 / 15:00 / 19:00 の1日4回
+    - cron: "0 22,2,6,10 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [".github/workflows/scrape.yml"]  # ワークフロー変更時に動作確認を兼ねて1回実行
+
+permissions:
+  contents: write   # データの commit/push
+  actions: write    # deploy-pages.yml の起動(GITHUB_TOKEN の push は他ワークフローを発火しないため明示的に呼ぶ)
+
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Run daily pipeline
+        timeout-minutes: 40
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python -m cardgap.pipeline
+
+      # パイプラインが途中で失敗/タイムアウトしても、取得できた分のデータは保存する
+      - name: Commit & push data
+        if: always()
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cardgap.db site/public/data
+          if git diff --cached --quiet; then
+            echo "no data changes"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "data: 自動更新 $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3 4; do
+            git push origin main && break
+            git pull --rebase origin main
+            sleep 5
+          done
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      # GITHUB_TOKEN の push は push トリガーを発火しないため、サイト再デプロイを明示的に起動
+      - name: Trigger site deploy
+        if: always() && steps.commit.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-pages.yml --ref main

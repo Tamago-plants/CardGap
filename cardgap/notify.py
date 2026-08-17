@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import date as _date
 from typing import Any, Optional
 
 import requests
@@ -316,12 +317,19 @@ def send_daily_digest(cfg: Config, conn: sqlite3.Connection, force: bool = False
     """日次ダイジェストを組み立てて Discord へ送る。
 
     - force=False かつ config の discord.daily_digest が無効なら何もせず True
+    - force=False で同じ日に送信済みなら再送しない(バッチを1日複数回実行する
+      クラウド運用でダイジェストが毎回届くのを防ぐ。送信日は app_state に記録)
     - Webhook 未設定: 通常はオプション機能としてスキップ(True)。force=True の
       明示実行では設定漏れをエラーとして False
     - 送信は全メッセージ 2xx で True。例外/非2xx は _post 内で logger.error して False
     """
     if not force and not cfg.get("discord.daily_digest", True):
         logger.info("discord.daily_digest が無効のためダイジェストをスキップ")
+        return True
+
+    today = _date.today().isoformat()
+    if not force and db.get_app_state(conn, "last_digest_date") == today:
+        logger.info("本日分のダイジェストは送信済みのためスキップ (%s)", today)
         return True
 
     webhook = cfg.discord_webhook_url()
@@ -341,5 +349,7 @@ def send_daily_digest(cfg: Config, conn: sqlite3.Connection, force: bool = False
     for payload in build_digest_messages(summary):
         if not _post(webhook, payload):
             return False
+    db.set_app_state(conn, "last_digest_date", today)
+    conn.commit()
     logger.info("Discord 日次ダイジェスト送信完了 (%s)", summary["date"])
     return True

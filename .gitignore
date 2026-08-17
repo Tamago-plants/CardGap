@@ -1,7 +1,8 @@
 __pycache__/
 *.pyc
 .venv/
-cardgap.db
+# cardgap.db はクラウド完結運用(GitHub Actionsが実行ごとにcommit)のため追跡対象。
+# ローカル実行主体に戻すなら「cardgap.db」をここに追加し直す
 cardgap.db-journal
 *.log
 .pytest_cache/

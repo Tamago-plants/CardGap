@@ -126,6 +126,12 @@ CREATE TABLE IF NOT EXISTS notified_deals (
     notified_at TEXT NOT NULL
 );
 
+-- アプリの小さな状態置き場(日次ダイジェストの送信済み日付など)
+CREATE TABLE IF NOT EXISTS app_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
 -- スクレイプ実行ログ(失敗の可視化用)
 CREATE TABLE IF NOT EXISTS scrape_runs (
     id             INTEGER PRIMARY KEY,
@@ -541,6 +547,21 @@ def mark_notified(conn: sqlite3.Connection, source: str, listing_url: str) -> No
 
 
 # ------------------------------------------------------------ fx_rates
+
+# ----------------------------------------------------------- app_state
+
+def get_app_state(conn: sqlite3.Connection, key: str) -> Optional[str]:
+    row = conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_app_state(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO app_state (key, value) VALUES (?, ?)"
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+
 
 # ------------------------------------------------------ market_history
 
