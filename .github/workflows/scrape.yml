@@ -9,7 +9,7 @@
 #   管理しているため、1 日に複数回走っても合計で上限を超えない
 # - Discord 日次ダイジェストは 1 日 1 回だけ送られる(送信済み日付を DB に記録)
 name: Scheduled scrape
-# 2026-08-17b: デバッグHTMLをdebug-htmlブランチへ(実DOM入手→パーサ修正用)
+# 2026-08-17c: メルカリ実DOM対応(aria-label円価格+スクロール)の検証run
 
 on:
   schedule:

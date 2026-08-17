@@ -159,6 +159,7 @@ def run_scrape(
                         wait_selector=getattr(mod, "WAIT_SELECTOR", None),
                         source=source,
                         query=query,
+                        scroll_rounds=getattr(mod, "SCROLL_ROUNDS", 0),
                     )
                     parsed = mod.parse_search_html(html, raw_query=query)
                 except Exception as e:

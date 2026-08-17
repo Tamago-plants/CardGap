@@ -86,6 +86,7 @@ def fetch_html(
     wait_selector: Optional[str] = None,
     source: str = "",
     query: str = "",
+    scroll_rounds: int = 0,
 ) -> str:
     """レート制限つきでURLを開いてHTMLを返す。
 
@@ -117,6 +118,13 @@ def fetch_html(
         else:
             # SPA系サイトの描画待ち
             page.wait_for_timeout(1500)
+        # 遅延読み込みサイト用: 数回スクロールして下方のセルも描画させる
+        for _ in range(max(0, scroll_rounds)):
+            try:
+                page.evaluate("window.scrollBy(0, window.innerHeight)")
+                page.wait_for_timeout(700)
+            except Exception:
+                break
         html = page.content()
         _maybe_dump_html(cfg, source, query, html)
         return html

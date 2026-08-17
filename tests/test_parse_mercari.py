@@ -27,9 +27,9 @@ def _card(psa_grade: int | None) -> Card:
 
 
 def test_parse_counts_and_failures():
-    """正常6件を返し、価格の無い壊れた1件は parse_failures に積む。"""
+    """正常セル(実DOM準拠の海外IP表示セル含む7件)を返し、価格の無い壊れた1件は parse_failures に積む。"""
     parsed = mercari.parse_search_html(_load_fixture(), raw_query="リザードン")
-    assert len(parsed.items) == 6
+    assert len(parsed.items) == 7
     assert parsed.parse_failures == 1
     assert parsed.errors  # 失敗の内訳が errors に残っている
 
@@ -98,3 +98,15 @@ def test_build_search_url():
     assert "status=on_sale" in url
     assert "sort=price" in url
     assert "order=asc" in url
+
+
+def test_parse_overseas_display_and_skeleton():
+    """実DOM準拠: 海外IP表示(US$)のセルは aria-label の円価格で取れ、
+    merSkeleton(未描画プレースホルダ)は失敗にカウントされない。"""
+    page = mercari.parse_search_html(_load_fixture(), raw_query="test")
+    shino = [i for i in page.items if "油女シノ" in i.title]
+    assert len(shino) == 1
+    assert shino[0].price_jpy == 300  # US$1.98 ではなく aria-label の 300円
+    assert shino[0].listing_url == "https://jp.mercari.com/item/m99900000001"
+    # スケルトンは items にも parse_failures にも入らない(元の失敗1件のみ)
+    assert page.parse_failures == 1

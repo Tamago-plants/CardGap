@@ -10,7 +10,9 @@ categories:
   pokemon:
     enabled: true
     names_csv: "data/pokemon_names.csv"   # 日英対訳辞書
-    snkrdunk: true                        # スニダンに商品マスタがあるカテゴリのみ true
+    snkrdunk: false                       # 2026-08: スニダンのキーワード検索がログイン必須化
+                                          # されたため停止中(ログインページはスコープ外)。
+                                          # 仕様が戻ったら true に
   naruto:                                 # NARUTOカードゲーム / ナルティメットデータカードダス
     enabled: true
     names_csv: "data/naruto_names.csv"

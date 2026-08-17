@@ -364,6 +364,13 @@ eBay 直近 `ebay_lookback_days`(既定 30)日の落札件数が `threshold.min_
 - **メルカリの部分失敗と在庫失効**: 「今回見えなかった出品は売切れ扱い(`active=0`)」の
   処理は、クエリが失敗したカードの出品を対象外にする(取得失敗＝売切れではない)。
   全クエリ失敗時は失効処理自体をスキップする。
+- **スニダン(2026-08 時点)**: キーワード検索がログイン必須になったため収集を停止中
+  (`categories.pokemon.snkrdunk: false`)。ログインが必要なページはスコープ外。仕様が
+  戻ったら true に切り替える
+- **eBay(2026-08 時点)**: GitHub Actions の IP には「Security Measure」ページ(bot検知)が
+  返り収集不可。サーキットブレーカーで数分で切り上げる設計。対応方針は Issue/会話で相談
+- **メルカリの海外IP表示**: 海外IPからは価格が US$ 表示になるが、aria-label の円価格を
+  読むため収集は正常に動く
 - **メルカリ / スニダンの DOM 変更**: パーサが壊れたら `config.yaml` の `scrape.debug_html_dir` に
   ディレクトリを指定して取得 HTML を保存し、実際の HTML を見ながら
   `cardgap/scrape/{mercari,snkrdunk,ebay}.py` のセレクタを修正 → `tests/fixtures/` の
