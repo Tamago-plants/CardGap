@@ -9,7 +9,7 @@
 #   管理しているため、1 日に複数回走っても合計で上限を超えない
 # - Discord 日次ダイジェストは 1 日 1 回だけ送られる(送信済み日付を DB に記録)
 name: Scheduled scrape
-# 2026-08-17: eBayブロック対策(高速フェイル+サーキットブレーカー+診断)後の検証run
+# 2026-08-17b: デバッグHTMLをdebug-htmlブランチへ(実DOM入手→パーサ修正用)
 
 on:
   schedule:
@@ -61,6 +61,21 @@ jobs:
           path: debug_html/
           if-no-files-found: ignore
           retention-days: 3
+
+      # 取得ページのHTMLを debug-html ブランチにも置く(開発環境から実DOMを
+      # 参照してパーサを直すため。orphanブランチをforce pushで常に最新のみ保持)
+      - name: Push debug HTML branch
+        if: always()
+        run: |
+          if [ -d debug_html ] && [ -n "$(ls -A debug_html)" ]; then
+            cd debug_html
+            git init -q -b debug-html
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -qm "debug html $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" debug-html
+          fi
 
       # パイプラインが途中で失敗/タイムアウトしても、取得できた分のデータは保存する
       - name: Commit & push data
