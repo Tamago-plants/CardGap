@@ -122,4 +122,4 @@ def test_build_search_url():
 
 def test_module_contract():
     assert ebay.SOURCE == "ebay"
-    assert ebay.WAIT_SELECTOR == "li.s-item"
+    assert "li.s-item" in ebay.WAIT_SELECTOR  # 新旧レイアウト対応でセレクタは複数持つ

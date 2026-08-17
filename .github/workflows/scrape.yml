@@ -9,7 +9,7 @@
 #   管理しているため、1 日に複数回走っても合計で上限を超えない
 # - Discord 日次ダイジェストは 1 日 1 回だけ送られる(送信済み日付を DB に記録)
 name: Scheduled scrape
-# 2026-08-16: ナルト系シリーズ監視(DN/NM/NX/忍)追加後の動作確認runをトリガー
+# 2026-08-17: eBayブロック対策(高速フェイル+サーキットブレーカー+診断)後の検証run
 
 on:
   schedule:
@@ -49,7 +49,18 @@ jobs:
         timeout-minutes: 40
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          CARDGAP_DEBUG_HTML_DIR: debug_html   # 取得失敗ページの診断用に保存
         run: python -m cardgap.pipeline
+
+      # 失敗ページのHTMLをartifactとして残す(bot検知かDOM変更かの切り分け用)
+      - name: Upload debug HTML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-html
+          path: debug_html/
+          if-no-files-found: ignore
+          retention-days: 3
 
       # パイプラインが途中で失敗/タイムアウトしても、取得できた分のデータは保存する
       - name: Commit & push data

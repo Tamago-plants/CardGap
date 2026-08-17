@@ -29,7 +29,9 @@ def _cfg(cap: int = 50) -> Config:
     return Config(
         {
             "categories": {"pokemon": {"enabled": True}},
-            "scrape": {"max_ebay_queries_per_day": cap},
+            # このテスト群は日次上限の検証が目的。スタブが常に0件を返すため
+            # サーキットブレーカー(連続0件で中断)は事実上無効にしておく
+            "scrape": {"max_ebay_queries_per_day": cap, "max_consecutive_failures": 10_000},
         }
     )
 
@@ -115,3 +117,17 @@ def test_non_ebay_source_has_no_daily_cap(conn, stubbed, monkeypatch):
     _make_cards(conn, 60)
     s = pipeline.run_scrape("mercari", _cfg(cap=5), conn)
     assert s.queries_total == 60  # メルカリは eBay の日次上限の対象外
+
+
+def test_circuit_breaker_stops_source_after_consecutive_empty(conn, stubbed, monkeypatch):
+    """連続で0件のクエリが続いたらそのソースを中断する(ブロック検知)。"""
+    _make_cards(conn, 20)
+    cfg = Config(
+        {
+            "categories": {"pokemon": {"enabled": True}},
+            "scrape": {"max_ebay_queries_per_day": 50, "max_consecutive_failures": 4},
+        }
+    )
+    s = pipeline.run_scrape("ebay", cfg, conn)
+    assert s.queries_total == 4  # 4クエリ試して全部0件 → 5クエリ目には進まない
+    assert any("中断" in e for e in s.errors)

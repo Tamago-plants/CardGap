@@ -72,6 +72,13 @@ def new_page(cfg: Config) -> Iterator["Page"]:  # noqa: F821 (Playwright型は�
             browser.close()
 
 
+# bot検知チャレンジページの典型ワード(診断ログ用)
+_CHALLENGE_MARKERS = (
+    "captcha", "pardon our interruption", "verify yourself", "are you a human",
+    "unusual traffic", "access denied", "robot", "checking your browser",
+)
+
+
 def fetch_html(
     page,
     url: str,
@@ -80,32 +87,59 @@ def fetch_html(
     source: str = "",
     query: str = "",
 ) -> str:
-    """レート制限つきでURLを開いてHTMLを返す。失敗は max_retries 回までリトライ。"""
+    """レート制限つきでURLを開いてHTMLを返す。
+
+    - ページ自体が開けない(ネットワーク/ナビゲーション失敗)→ max_retries 回リトライ
+    - ページは開けたが wait_selector が現れない → リトライしても改善しない
+      (bot チャレンジか DOM 変更)ため、その時点の HTML を即返す。
+      パーサ側で「0件 + エラー」として可視化され、debug 保存の対象にもなる
+    """
     max_retries = int(cfg.get("scrape.max_retries", 2))
     last_err: Exception | None = None
     for attempt in range(max_retries + 1):
         polite_sleep(cfg)
         try:
             page.goto(url, wait_until="domcontentloaded")
-            if wait_selector:
-                page.wait_for_selector(wait_selector, state="attached")
-            else:
-                # SPA系サイトの描画待ち
-                page.wait_for_timeout(1500)
-            html = page.content()
-            _maybe_dump_html(cfg, source, query, html)
-            return html
         except Exception as e:
             last_err = e
             logger.warning(
                 "fetch failed (%s, attempt %d/%d): %s", url, attempt + 1, max_retries + 1, e
             )
+            continue
+        if wait_selector:
+            try:
+                page.wait_for_selector(wait_selector, state="attached")
+            except Exception:
+                html = page.content()
+                _log_page_diagnosis(url, wait_selector, html)
+                _maybe_dump_html(cfg, source, f"{query}_noselector", html)
+                return html
+        else:
+            # SPA系サイトの描画待ち
+            page.wait_for_timeout(1500)
+        html = page.content()
+        _maybe_dump_html(cfg, source, query, html)
+        return html
     raise RuntimeError(f"fetch failed after {max_retries + 1} attempts: {url}") from last_err
 
 
+def _log_page_diagnosis(url: str, wait_selector: str, html: str) -> None:
+    """セレクタ不在時に「ブロックされたのか DOM が変わったのか」を切り分けるログ。"""
+    lower = html.lower()
+    title_m = re.search(r"<title[^>]*>(.*?)</title>", lower, re.DOTALL)
+    title = (title_m.group(1).strip()[:80] if title_m else "(no title)")
+    markers = [m for m in _CHALLENGE_MARKERS if m in lower]
+    logger.warning(
+        "selector '%s' not found on %s (len=%d, title=%r, challenge_markers=%s)"
+        " — bot検知 or DOM変更の可能性",
+        wait_selector, url, len(html), title, markers or "none",
+    )
+
+
 def _maybe_dump_html(cfg: Config, source: str, query: str, html: str) -> None:
-    """config の debug_html_dir が設定されていれば取得HTMLを保存(セレクタ調査用)。"""
-    dump_dir = cfg.get("scrape.debug_html_dir", "")
+    """debug_html_dir(環境変数 CARDGAP_DEBUG_HTML_DIR が優先)が設定されていれば
+    取得HTMLを保存(セレクタ調査用)。"""
+    dump_dir = os.environ.get("CARDGAP_DEBUG_HTML_DIR") or cfg.get("scrape.debug_html_dir", "")
     if not dump_dir:
         return
     out = cfg.resolve_path(dump_dir)

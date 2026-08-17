@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 SOURCE = "ebay"
 
 # 検索結果1件分の <li>。fetch_html() の描画待ちにも使う
-WAIT_SELECTOR = "li.s-item"
+# 新旧レイアウト両対応で待つ(s-item=旧、s-card=新カード型SRP)。どちらも無ければ
+# fetch_html が即座にHTMLを返し「0件+エラー」として可視化される
+WAIT_SELECTOR = "li.s-item, li.s-card, ul.srp-results"
 
 # 例: "$1,234.56"。"$300.00 to $350.00" のレンジは最初のマッチ = 下限を採用する
 _PRICE_RE = re.compile(r"\$\s*([\d,]+(?:\.\d{1,2})?)")

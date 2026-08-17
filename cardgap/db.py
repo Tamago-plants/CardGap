@@ -675,6 +675,9 @@ def start_scrape_run(conn: sqlite3.Connection, source: str) -> int:
     cur = conn.execute(
         "INSERT INTO scrape_runs (source, started_at) VALUES (?, ?)", (source, utcnow())
     )
+    # プロセスがタイムアウト等で殺されても「開始した」記録は残るよう即コミット
+    # (finished_at が NULL のままの行 = 途中で殺された実行、として診断に使える)
+    conn.commit()
     return int(cur.lastrowid)
 
 

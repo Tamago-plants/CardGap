@@ -44,7 +44,8 @@ threshold:
 scrape:
   delay_min_s: 2.0               # リクエスト間のランダムディレイ下限(秒)
   delay_max_s: 5.0               # 同上限
-  max_retries: 2                 # 失敗時リトライ回数
+  max_retries: 2                 # 失敗時リトライ回数(ページが開けない場合のみ。セレクタ不在は即失敗扱い)
+  max_consecutive_failures: 4    # 連続この回数0件ならそのソースを中断(ブロック検知)
   max_ebay_queries_per_day: 50   # eBay検索は1日この件数まで(bot検知対策)
   ebay_lookback_days: 30         # 相場集計の対象期間
   headless: true

@@ -24,7 +24,9 @@ from .watchlist import import_watchlist
 
 logger = logging.getLogger(__name__)
 
-SOURCES = ("ebay", "mercari", "snkrdunk")
+# 日本のサイトを先に回す: eBay がブロックされて時間を消費しても、
+# 仕入れ側(メルカリ/スニダン)のデータ収集が道連れにならないようにする
+SOURCES = ("mercari", "snkrdunk", "ebay")
 
 
 def _item_title(item) -> str:
@@ -132,9 +134,20 @@ def run_scrape(
     stats = ScrapeStats(source=source)
     run_id = db.start_scrape_run(conn, source)
 
+    # サーキットブレーカー: 連続 N クエリで1件も取れなければそのソースは
+    # ブロック中とみなして中断する(残りのクエリ時間を他ソースに回す)
+    max_consecutive = int(cfg.get("scrape.max_consecutive_failures", 4))
+    consecutive_empty = 0
+
     if target_cards:
         with browser.new_page(cfg) as page:
             for card in target_cards:
+                if consecutive_empty >= max_consecutive:
+                    msg = (f"[{source}] {max_consecutive}クエリ連続で取得0件のため中断"
+                           "(bot検知またはDOM変更の可能性)")
+                    stats.errors.append(msg)
+                    logger.warning(msg)
+                    break
                 query = mod.build_query(card)
                 stats.queries_total += 1
                 try:
@@ -150,6 +163,7 @@ def run_scrape(
                     parsed = mod.parse_search_html(html, raw_query=query)
                 except Exception as e:
                     stats.queries_failed += 1
+                    consecutive_empty += 1
                     if card.id is not None:
                         stats.failed_card_ids.append(card.id)
                     stats.errors.append(f"[{source}] {query}: {e}")
@@ -158,6 +172,7 @@ def run_scrape(
 
                 stats.parse_failures += parsed.parse_failures
                 stats.errors.extend(parsed.errors[:3])
+                consecutive_empty = 0 if parsed.items else consecutive_empty + 1
 
                 nd = name_dicts.get(card.category)
                 if card.is_series_watch():
