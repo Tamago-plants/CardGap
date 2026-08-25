@@ -290,8 +290,17 @@ def recompute_matches(
     return deals
 
 
-def run_daily(cfg: Optional[Config] = None) -> None:
+def run_daily(
+    cfg: Optional[Config] = None, sources: Optional[tuple[str, ...]] = None
+) -> None:
+    """日次バッチ一式。sources で対象ソースを絞れる。
+
+    例: sources=("ebay",) は「eBay相場だけをローカルPCで収集する」運用
+    (クラウドのIPがeBayにブロックされるため。scripts/ebay_local.sh から使う)。
+    絞った場合も相場集計・損益計算・通知・エクスポートまで通して実行される。
+    """
     cfg = cfg or load_config()
+    active = tuple(s for s in (sources or SOURCES) if s in SOURCES)
     logging.basicConfig(
         level=getattr(logging, str(cfg.get("app.log_level", "INFO")), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -299,13 +308,13 @@ def run_daily(cfg: Optional[Config] = None) -> None:
     conn = db.connect(cfg.db_path())
     try:
         n = import_watchlist(conn, cfg)
-        logger.info("watchlist imported: %d cards", n)
+        logger.info("watchlist imported: %d cards (sources=%s)", n, ",".join(active))
 
         fx_rate = fx.get_usd_jpy(cfg, conn, refresh=True)
 
         started_at = db.utcnow()
         all_stats: list[ScrapeStats] = []
-        for source in SOURCES:
+        for source in active:
             try:
                 all_stats.append(run_scrape(source, cfg, conn))
             except Exception as e:  # 1ソース全滅でも他ソースは続行
@@ -349,5 +358,19 @@ def run_daily(cfg: Optional[Config] = None) -> None:
         conn.close()
 
 
+def _main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m cardgap.pipeline")
+    parser.add_argument(
+        "--sources",
+        help="対象ソースをカンマ区切りで指定(例: ebay)。省略時は全ソース",
+    )
+    parser.add_argument("--config", help="config.yaml のパス")
+    args = parser.parse_args()
+    sources = tuple(s.strip() for s in args.sources.split(",")) if args.sources else None
+    run_daily(load_config(args.config), sources=sources)
+
+
 if __name__ == "__main__":
-    run_daily()
+    _main()

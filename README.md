@@ -141,6 +141,37 @@ Streamlit 側でのみ可能。
 - `cardgap.db` は Actions が commit するため追跡対象になっている。ローカルで作業する
   ときは実行前に `git pull` して最新の DB を取り込むこと
 
+## eBay相場の収集(自宅PCで実行・ハイブリッド運用)
+
+クラウド(GitHub Actions)の IP は eBay の bot 検知にブロックされるため、
+**eBay Sold 相場の収集だけは自宅 PC から実行する**(メルカリ収集・集計・サイト更新・
+通知はクラウドが全自動で継続する)。
+
+### 初回セットアップ(1回だけ、約5分)
+
+```bash
+git clone https://github.com/Tamago-plants/CardGap.git
+cd CardGap
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+playwright install chromium
+```
+
+### 実行(週2〜3回。毎日ならベスト)
+
+```bash
+./scripts/ebay_local.sh                                          # Mac / Linux
+powershell -ExecutionPolicy Bypass -File scripts\ebay_local.ps1  # Windows
+```
+
+最新DBの取得 → eBayスクレイプ(1日50クエリ上限は自動管理)→ 相場集計・損益計算・
+Discord通知 → サイト用JSON生成 → push まで一括で行う。push を受けてサイトが自動更新される。
+Discord 通知を出したい場合は実行前に `DISCORD_WEBHOOK_URL` を設定しておく。
+
+cron / タスクスケジューラに登録すれば PC 起動中は全自動(登録例は次節と同じ要領で、
+スクリプトを `ebay_local.sh` / `ebay_local.ps1` にする)。
+
 ## 日次実行のセットアップ(ローカル実行に切り替える場合)
 
 日次バッチは `scripts/daily.sh`(Mac / Linux)/ `scripts/daily.ps1`(Windows)経由で実行する。
