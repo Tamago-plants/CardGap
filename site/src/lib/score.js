@@ -13,7 +13,7 @@ export function scoreParts(deal) {
     return { rateF: 0, liqF: 0, confW: 0, relW: 0, score: 0, negative: true };
   }
   const rateF = clamp((deal.profit_rate || 0) / 0.5, 0, 1);
-  const liqF = clamp((deal.ebay_count_30d || 0) / 10, 0.2, 1);
+  const liqF = clamp((deal.market_count ?? deal.ebay_count_30d ?? 0) / 10, 0.2, 1);
   const confW = CONF_W[deal.confidence] ?? 0.45;
   const relW = REL_W[deal.reliability] ?? 0.5;
   return {

@@ -11,16 +11,17 @@ import SpreadBar from "./SpreadBar.jsx";
 import {
   categoryLabel,
   confidenceLabel,
+  fmtMarket,
   fmtPct,
   fmtSignedPct,
   fmtSignedYen,
   fmtTurnover,
-  fmtUsd,
   fmtYen,
+  marketLabel,
   reliabilityLabel,
   sourceLabel,
 } from "../lib/format.js";
-import { isAboveThreshold, isNewDeal, medianSeries } from "../lib/data.js";
+import { isAboveThreshold, isNewDeal, marketOf, medianSeries } from "../lib/data.js";
 import { opportunityScore } from "../lib/score.js";
 
 const QUICK = [
@@ -35,7 +36,7 @@ const SORTS = {
   rate: { label: "利益率", get: (r) => r.deal.profit_rate ?? -99 },
   profit: { label: "利益", get: (r) => r.deal.profit_jpy ?? -9e9 },
   buy: { label: "仕入価格", get: (r) => r.deal.buy_price_jpy ?? 0 },
-  count: { label: "件数", get: (r) => r.deal.ebay_count_30d ?? 0 },
+  count: { label: "件数", get: (r) => marketOf(r.deal).count },
 };
 
 const splitCsv = (s) => (s ? s.split(",").filter(Boolean) : []);
@@ -43,8 +44,9 @@ const splitCsv = (s) => (s ? s.split(",").filter(Boolean) : []);
 /** フィルタ適用後の行を CSV にして client-side でダウンロード */
 function exportCsv(rows) {
   const head = [
-    "カード名", "カテゴリ", "仕入元", "仕入価格JPY", "仕入総額JPY", "eBay中央値USD",
-    "30日件数", "想定売上JPY", "実質利益JPY", "利益率", "スコア", "確度", "信頼度", "出品URL",
+    "カード名", "カテゴリ", "仕入元", "仕入価格JPY", "仕入総額JPY", "相場ソース",
+    "相場中央値", "相場通貨", "30日件数", "想定売上JPY", "実質利益JPY", "利益率",
+    "スコア", "確度", "信頼度", "出品URL",
   ];
   const esc = (v) => {
     const s = String(v ?? "");
@@ -53,10 +55,11 @@ function exportCsv(rows) {
   const lines = [head.join(",")];
   for (const r of rows) {
     const d = r.deal;
+    const mk = marketOf(d);
     lines.push(
       [
         d.display_name, d.category, d.source, d.buy_price_jpy, d.buy_total_jpy,
-        d.ebay_median_usd, d.ebay_count_30d, d.revenue_jpy, d.profit_jpy,
+        mk.source, mk.median, mk.currency, mk.count, d.revenue_jpy, d.profit_jpy,
         d.profit_rate, r.score, d.confidence, d.reliability, d.listing_url,
       ].map(esc).join(",")
     );
@@ -189,6 +192,12 @@ export default function DealsScreen({ deals, history, summary, params, setParams
   }, [history]);
 
   const categories = useMemo(() => Array.from(new Set(deals.map((d) => d.category).filter(Boolean))), [deals]);
+
+  // 相場列の見出し: 全案件が同一ソースならそのラベル、混在なら中立の「相場」
+  const marketHead = useMemo(() => {
+    const srcSet = new Set(deals.map((d) => marketOf(d).source));
+    return srcSet.size === 1 ? marketLabel(srcSet.values().next().value) : "相場";
+  }, [deals]);
 
   const rows = useMemo(() => {
     const cats = splitCsv(params.cat);
@@ -331,7 +340,7 @@ export default function DealsScreen({ deals, history, summary, params, setParams
                     </HoverTip>
                   </th>
                   <th scope="col" className="num-col sortable" onClick={() => onSort("count")} aria-sort={sortKey === "count" ? (sortDir === "asc" ? "ascending" : "descending") : undefined}>
-                    eBay相場{arrow("count")}
+                    {marketHead}{arrow("count")}
                   </th>
                   <th scope="col">30日推移</th>
                   <th scope="col" className="num-col sortable" onClick={() => onSort("profit")} aria-sort={sortKey === "profit" ? (sortDir === "asc" ? "ascending" : "descending") : undefined}>
@@ -349,6 +358,7 @@ export default function DealsScreen({ deals, history, summary, params, setParams
               <tbody>
                 {rows.map((r, i) => {
                   const d = r.deal;
+                  const mk = marketOf(d);
                   const spark = medianSeries(histMap.get(d.card_id), 30);
                   const isNew = isNewDeal(d, generatedAt);
                   return (
@@ -372,9 +382,9 @@ export default function DealsScreen({ deals, history, summary, params, setParams
                         <SpreadBar deal={d} />
                       </td>
                       <td className="cell-market num-col">
-                        <span className="mk-median">{fmtUsd(d.ebay_median_usd)}</span>{" "}
-                        <span className="count-badge">{d.ebay_count_30d}件</span>
-                        <div className="mk-sub">{fmtTurnover(d.ebay_count_30d)}</div>
+                        <span className="mk-median">{fmtMarket(mk.median, mk.currency)}</span>{" "}
+                        <span className="count-badge">{mk.count}件</span>
+                        <div className="mk-sub">{fmtTurnover(mk.count)}</div>
                       </td>
                       <td>
                         <Sparkline values={spark} />
@@ -416,6 +426,7 @@ export default function DealsScreen({ deals, history, summary, params, setParams
           <div className="cards-list">
             {rows.map((r, i) => {
               const d = r.deal;
+              const mk = marketOf(d);
               const isNew = isNewDeal(d, generatedAt);
               return (
                 <button key={i} type="button" className="card deal-card" onClick={() => onOpenDeal(d)}>
@@ -429,7 +440,7 @@ export default function DealsScreen({ deals, history, summary, params, setParams
                       <span className="chip">{sourceLabel(d.source)}</span>
                       <span className="num">{fmtYen(d.buy_price_jpy)}</span>
                       <span className="muted">→</span>
-                      <span className="num">{fmtUsd(d.ebay_median_usd)}</span>
+                      <span className="num">{fmtMarket(mk.median, mk.currency)}</span>
                     </span>
                     <span className="dc-row">
                       <span className={`dc-profit ${d.profit_jpy >= 0 ? "pos" : "neg"}`}>

@@ -26,6 +26,11 @@ export function fmtUsd(v, digits = 2) {
   );
 }
 
+/** 相場値の通貨別フォーマット("JPY"→fmtYen、それ以外→fmtUsd) */
+export function fmtMarket(v, currency, digits = 2) {
+  return currency === "JPY" ? fmtYen(v) : fmtUsd(v, digits);
+}
+
 /** 利益率など(0.235 → "23.5%") */
 export function fmtPct(rate, digits = 1) {
   if (rate == null || Number.isNaN(rate)) return "—";
@@ -92,6 +97,7 @@ const CATEGORY_LABELS = { pokemon: "ポケモン", naruto: "ナルト", onepiece
 const SOURCE_LABELS = { mercari: "メルカリ", snkrdunk: "スニダン" };
 const CONFIDENCE_LABELS = { high: "確度high", medium: "確度med", low: "確度low" };
 const RELIABILITY_LABELS = { ok: "信頼ok", low: "信頼low" };
+const MARKET_LABELS = { ebay: "eBay相場", mercari: "メルカリ相場" };
 
 export function categoryLabel(cat) {
   return CATEGORY_LABELS[cat] || cat || "—";
@@ -107,4 +113,9 @@ export function confidenceLabel(c) {
 
 export function reliabilityLabel(r) {
   return RELIABILITY_LABELS[r] || r || "—";
+}
+
+/** 相場の出所ラベル(market_source → 表示名)。旧データ(未設定)は eBay 扱い */
+export function marketLabel(source) {
+  return MARKET_LABELS[source] || MARKET_LABELS.ebay;
 }

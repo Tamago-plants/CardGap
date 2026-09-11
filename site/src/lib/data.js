@@ -28,12 +28,40 @@ export function isAboveThreshold(deal, thresholds) {
   );
 }
 
+/**
+ * 案件の相場情報を正規化して返す: {source, currency, median, min, max, count}。
+ * 旧データ(market_source 無し)は eBay 相場(USD)として扱う。
+ * market_source==="mercari" のとき ebay_* 列の値は円(列名は歴史的経緯)。
+ */
+export function marketOf(deal) {
+  const d = deal || {};
+  const source = d.market_source || "ebay";
+  const currency = d.market_currency || (source === "mercari" ? "JPY" : "USD");
+  return {
+    source,
+    currency,
+    median: d.market_median ?? d.ebay_median_usd ?? null,
+    min: d.ebay_min_usd ?? null,
+    max: d.ebay_max_usd ?? null,
+    count: d.market_count ?? d.ebay_count_30d ?? 0,
+  };
+}
+
 /** eBay Sold 検索URL(英名 + 型番 + PSA指定) */
 export function ebaySoldUrl(cardLike) {
   const parts = [cardLike.name_en || cardLike.name_ja || "", cardLike.card_number || ""];
   if (cardLike.psa_grade) parts.push(`psa ${Math.round(cardLike.psa_grade)}`);
   const q = parts.filter(Boolean).join(" ").trim();
   return `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}&LH_Sold=1&LH_Complete=1`;
+}
+
+/** メルカリ売り切れ検索URL(日本語名 + 型番、メルカリ相場案件の確認用) */
+export function mercariSoldUrl(cardLike) {
+  const q = [cardLike.name_ja || cardLike.display_name || "", cardLike.card_number || ""]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  return `https://jp.mercari.com/search?keyword=${encodeURIComponent(q)}&status=sold_out`;
 }
 
 /** history.cards から card_id → カード のマップを作る */
@@ -43,11 +71,19 @@ export function historyByCard(history) {
   return map;
 }
 
-/** 直近N日分の中央値配列(スパークライン用)。データが無ければ null */
+/**
+ * 直近N日分の中央値配列(スパークライン用)。データが無ければ null。
+ * eBay履歴(points)が無いカードはメルカリ売却相場(mercari_points, 円)で代用する
+ * (スパークラインは形だけ見るので通貨は問わない)。
+ */
 export function medianSeries(histCard, days = 30) {
-  if (!histCard || !histCard.points || histCard.points.length === 0) return null;
-  const pts = histCard.points.slice(-days);
-  return pts.map((p) => p.median_usd);
+  if (!histCard) return null;
+  if (histCard.points && histCard.points.length > 0) {
+    return histCard.points.slice(-days).map((p) => p.median_usd);
+  }
+  const mpts = histCard.mercari_points || [];
+  if (mpts.length === 0) return null;
+  return mpts.slice(-days).map((p) => p.median_jpy);
 }
 
 /**

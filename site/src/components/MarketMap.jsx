@@ -1,11 +1,13 @@
 // 市場マップ: squarified treemap(手書きSVG)。
-// 面積 = eBay中央値USD × 30日件数(≒月間流通規模)、
+// 面積 = 相場中央値 × 30日件数(≒月間流通規模)、
 // 色 = 最良案件の利益率のダイバージング(負=赤 / 0=中立グレー / 正=緑)。
+// 相場は eBay 履歴(USD)を優先し、無いカードはメルカリ売却相場(JPY)で補う。
+// JPYベースの面積は為替でUSD相当に正規化して混在時も比較可能にする。
 // 案件が無いカード(履歴のみ)は中立色 + 斜線テクスチャで区別する。
 import { useMemo, useRef, useState } from "react";
 import { squarify } from "../lib/treemap.js";
-import { divergingColor, inkFor } from "../lib/data.js";
-import { categoryLabel, fmtPct, fmtSignedPct, fmtUsd } from "../lib/format.js";
+import { divergingColor, inkFor, marketOf } from "../lib/data.js";
+import { categoryLabel, fmtMarket, fmtPct, fmtSignedPct } from "../lib/format.js";
 import { opportunityScore } from "../lib/score.js";
 
 // palette.md のダイバージング用ステップ(light/dark)。中点は中立グレー
@@ -30,11 +32,12 @@ function truncateToWidth(s, maxPx, fs = 13) {
   return out;
 }
 
-export default function MarketMap({ deals, history, theme, params, setParams, onOpenCard }) {
+export default function MarketMap({ deals, history, summary, theme, params, setParams, onOpenCard }) {
   const wrapRef = useRef(null);
   const [tip, setTip] = useState(null); // {x, y, node}
   const catFilter = params.cat || "all";
   const poles = POLES[theme] || POLES.dark;
+  const fx = (summary && summary.fx_rate) || 150; // JPY面積のUSD正規化用
 
   // カード単位に集計: 面積は流通規模、色は最良案件の利益率
   const nodes = useMemo(() => {
@@ -45,11 +48,16 @@ export default function MarketMap({ deals, history, theme, params, setParams, on
     }
     const out = [];
     for (const c of (history && history.cards) || []) {
-      const pts = c.points || [];
+      // eBay履歴を優先。無ければメルカリ売却相場(円)で補う
+      const ebayPts = c.points || [];
+      const mercPts = c.mercari_points || [];
+      const useMerc = ebayPts.length === 0 && mercPts.length > 0;
+      const pts = useMerc ? mercPts : ebayPts;
       if (pts.length === 0) continue;
       const latest = pts[pts.length - 1];
+      const median = useMerc ? latest.median_jpy : latest.median_usd;
       const count30 = pts.slice(-30).reduce((a, p) => a + (p.count || 0), 0);
-      const size = (latest.median_usd || 0) * count30;
+      const size = ((median || 0) * count30) / (useMerc ? fx : 1);
       if (size <= 0) continue;
       const deal = bestDeal.get(c.card_id) || null;
       out.push({
@@ -57,24 +65,27 @@ export default function MarketMap({ deals, history, theme, params, setParams, on
         name: c.display_name,
         category: c.category,
         value: size,
-        median: latest.median_usd,
+        median,
+        currency: useMerc ? "JPY" : "USD",
         count30,
         deal,
         rate: deal ? deal.profit_rate : null,
       });
     }
-    // 案件だけあって履歴が無いカードも面積を仕入価格ベースで補完(0件で壊さない)
+    // 案件だけあって履歴が無いカードも面積を相場ベースで補完(0件で壊さない)
     for (const [cardId, d] of bestDeal) {
       if (!out.some((n) => n.card_id === cardId)) {
-        const size = (d.ebay_median_usd || 0) * (d.ebay_count_30d || 0);
+        const mk = marketOf(d);
+        const size = ((mk.median || 0) * (mk.count || 0)) / (mk.currency === "JPY" ? fx : 1);
         if (size > 0) {
           out.push({
             card_id: cardId,
             name: d.display_name,
             category: d.category,
             value: size,
-            median: d.ebay_median_usd,
-            count30: d.ebay_count_30d,
+            median: mk.median,
+            currency: mk.currency,
+            count30: mk.count,
             deal: d,
             rate: d.profit_rate,
           });
@@ -82,7 +93,7 @@ export default function MarketMap({ deals, history, theme, params, setParams, on
       }
     }
     return out;
-  }, [deals, history]);
+  }, [deals, history, fx]);
 
   const categories = useMemo(() => {
     const set = new Set(nodes.map((n) => n.category).filter(Boolean));
@@ -207,7 +218,7 @@ export default function MarketMap({ deals, history, theme, params, setParams, on
             <div className="tm-tooltip" style={{ left: tip.x, top: tip.y }}>
               <b>{tip.node.name}</b>
               <br />
-              <span className="text2">相場</span> <b>{fmtUsd(tip.node.median)}</b> ×{" "}
+              <span className="text2">相場</span> <b>{fmtMarket(tip.node.median, tip.node.currency)}</b> ×{" "}
               <b>{tip.node.count30}件/30日</b>
               <br />
               {tip.node.deal ? (
@@ -249,7 +260,7 @@ export default function MarketMap({ deals, history, theme, params, setParams, on
           </svg>
           案件なし(履歴のみ)
         </span>
-        <span>面積 = eBay中央値 × 30日販売数(月間流通規模)</span>
+        <span>面積 = 相場中央値 × 30日販売数(月間流通規模)</span>
       </div>
     </div>
   );

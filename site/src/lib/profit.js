@@ -40,6 +40,45 @@ export function computeProfit({ usd, buyJpy, fx, model, source }) {
   };
 }
 
+/** メルカリ売却モデルのパラメータ(summary.profit_model.mercari_sell、無ければ既定値)。 */
+export function mercariSellParams(model) {
+  const s = (model && model.mercari_sell) || {};
+  return { fee_rate: s.fee_rate ?? 0.1, shipping_jpy: s.shipping_jpy ?? 210 };
+}
+
+/**
+ * メルカリ売却相場(円)ベースの損益(profit.py の profit_for_mercari_market と同一式)。
+ *   想定売上 = 売却中央値(円) / 手数料 = 売上×10% / 送料 = 210円(既定)。為替は関与しない。
+ */
+export function computeMercariProfit({ sellJpy, buyJpy, model, source }) {
+  const sell = mercariSellParams(model);
+  const revenue = sellJpy || 0;
+  const fees = revenue * (sell.fee_rate || 0);
+  const shipOut = sell.shipping_jpy || 0;
+  const side = buySideParams(model, source);
+  const buyTotal = (buyJpy || 0) * (1 + (side.fee_rate || 0)) + (side.shipping_jpy || 0);
+  const profit = revenue - fees - shipOut - buyTotal;
+  const rate = buyTotal > 0 ? profit / buyTotal : 0;
+  return {
+    revenue: Math.round(revenue),
+    fees: Math.round(fees),
+    shipOut: Math.round(shipOut),
+    buyTotal: Math.round(buyTotal),
+    profit: Math.round(profit),
+    rate,
+  };
+}
+
+/** メルカリ売却モデルでの損益分岐となる仕入価格の上限。 */
+export function breakevenBuyMercari({ sellJpy, model, source }) {
+  const sell = mercariSellParams(model);
+  const revenue = sellJpy || 0;
+  const side = buySideParams(model, source);
+  const maxBuyTotal = revenue * (1 - (sell.fee_rate || 0)) - (sell.shipping_jpy || 0);
+  const buy = (maxBuyTotal - (side.shipping_jpy || 0)) / (1 + (side.fee_rate || 0));
+  return Math.max(0, Math.floor(buy));
+}
+
 /** 損益分岐となる仕入価格の上限(この価格で買うと利益0)。 */
 export function breakevenBuy({ usd, fx, model, source }) {
   const m = model || {};

@@ -150,6 +150,7 @@ export default function App() {
               <Rankings
                 deals={deals}
                 history={history}
+                summary={summary}
                 params={params}
                 setParams={setParams}
                 onOpenDeal={openDeal}
@@ -160,6 +161,7 @@ export default function App() {
               <MarketMap
                 deals={deals}
                 history={history}
+                summary={summary}
                 theme={theme}
                 params={params}
                 setParams={setParams}
@@ -181,7 +183,11 @@ export default function App() {
 
         <footer className="site-footer">
           <span>
-            相場はeBay Sold直近30日の中央値。検出は参考情報であり売買判断は自己責任でお願いします。
+            {summary && summary.market_mode === "mercari"
+              ? "相場はメルカリ売却(直近30日)の中央値。検出は参考情報であり売買判断は自己責任でお願いします。"
+              : summary && summary.market_mode === "auto"
+                ? "相場はeBay Sold / メルカリ売却(直近30日)の中央値。検出は参考情報であり売買判断は自己責任でお願いします。"
+                : "相場はeBay Sold直近30日の中央値。検出は参考情報であり売買判断は自己責任でお願いします。"}
           </span>
           <a href="https://github.com/" target="_blank" rel="noopener noreferrer">
             GitHub

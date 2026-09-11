@@ -2,6 +2,8 @@
 // どの画面からもカード/案件クリックで開く。ESC・オーバーレイクリックで閉じる。
 // 損益ブレークダウン / What-ifシミュレータ / 価格チャート / スナップショット表 /
 // 他の仕入れ候補 を1枚に集約する、このツールの核体験。
+// 相場は market_source(eBay=USD / メルカリ=JPY)に合わせて表記・リンク・
+// シミュレータのモデルを切り替える。
 import { useEffect, useMemo, useRef, useState } from "react";
 import CardThumb from "./CardThumb.jsx";
 import ScoreBadge from "./ScoreBadge.jsx";
@@ -9,28 +11,37 @@ import PriceChart from "./PriceChart.jsx";
 import {
   categoryLabel,
   confidenceLabel,
+  fmtMarket,
   fmtPct,
   fmtSignedPct,
   fmtSignedYen,
   fmtUsd,
   fmtYen,
+  marketLabel,
   reliabilityLabel,
   sourceLabel,
 } from "../lib/format.js";
-import { dealKey, ebaySoldUrl, isNewDeal } from "../lib/data.js";
-import { breakevenBuy, computeProfit } from "../lib/profit.js";
+import { dealKey, ebaySoldUrl, isNewDeal, marketOf, mercariSoldUrl } from "../lib/data.js";
+import {
+  breakevenBuy,
+  breakevenBuyMercari,
+  computeMercariProfit,
+  computeProfit,
+  mercariSellParams,
+} from "../lib/profit.js";
 
 /** 損益ブレークダウン(横バー + 数値は必ずテキスト併記) */
-function PlBreakdown({ deal }) {
+function PlBreakdown({ deal, marketSource }) {
   const revenue = deal.revenue_jpy || 0;
   const fees = deal.ebay_fees_jpy || 0;
   const cost = deal.buy_total_jpy || 0;
   const profit = deal.profit_jpy || 0;
   const ship = Math.max(0, revenue - fees - cost - profit);
   const max = Math.max(revenue, 1);
+  const feeLabel = marketSource === "mercari" ? "販売手数料" : "eBay手数料";
   const rows = [
     { label: "想定売上", v: revenue, cls: "seg-cost", signed: false },
-    { label: "eBay手数料", v: -fees, cls: "seg-fee", signed: true },
+    { label: feeLabel, v: -fees, cls: "seg-fee", signed: true },
     { label: "発送送料", v: -ship, cls: "seg-fee", signed: true },
     { label: "仕入総額", v: -cost, cls: "seg-fee", signed: true },
     { label: "実質利益", v: profit, cls: profit >= 0 ? "seg-profit" : "seg-deficit", signed: true },
@@ -58,26 +69,37 @@ function PlBreakdown({ deal }) {
   );
 }
 
-/** What-if シミュレータ(profit.py と同一式をJSで再現、ライブ計算) */
-function WhatIf({ initialBuy, initialUsd, fx, model, source }) {
+/** What-if シミュレータ(profit.py と同一式をJSで再現、ライブ計算)。
+ *  mode="ebay" は USD 売値 + 為替、mode="mercari" は円の想定売値のみ(為替は関与しない)。 */
+function WhatIf({ mode, initialBuy, initialSell, fx, model, source }) {
   const [buy, setBuy] = useState(initialBuy);
-  const [usd, setUsd] = useState(initialUsd);
+  const [sell, setSell] = useState(initialSell);
   useEffect(() => {
     setBuy(initialBuy);
-    setUsd(initialUsd);
-  }, [initialBuy, initialUsd]);
+    setSell(initialSell);
+  }, [initialBuy, initialSell, mode]);
 
+  const isMercari = mode === "mercari";
   const res = useMemo(
-    () => computeProfit({ usd: Number(usd) || 0, buyJpy: Number(buy) || 0, fx, model, source }),
-    [usd, buy, fx, model, source]
+    () =>
+      isMercari
+        ? computeMercariProfit({ sellJpy: Number(sell) || 0, buyJpy: Number(buy) || 0, model, source })
+        : computeProfit({ usd: Number(sell) || 0, buyJpy: Number(buy) || 0, fx, model, source }),
+    [sell, buy, fx, model, source, isMercari]
   );
   const be = useMemo(
-    () => breakevenBuy({ usd: Number(usd) || 0, fx, model, source }),
-    [usd, fx, model, source]
+    () =>
+      isMercari
+        ? breakevenBuyMercari({ sellJpy: Number(sell) || 0, model, source })
+        : breakevenBuy({ usd: Number(sell) || 0, fx, model, source }),
+    [sell, fx, model, source, isMercari]
   );
 
   const buyMax = Math.max(Math.ceil((Math.max(initialBuy, be) * 1.6) / 1000) * 1000, 5000);
-  const usdMax = Math.max(Math.ceil((initialUsd * 1.6) / 10) * 10, 20);
+  const sellMax = isMercari
+    ? Math.max(Math.ceil((initialSell * 1.6) / 1000) * 1000, 5000)
+    : Math.max(Math.ceil((initialSell * 1.6) / 10) * 10, 20);
+  const sellStep = isMercari ? 100 : 1;
 
   return (
     <div className="whatif">
@@ -107,27 +129,27 @@ function WhatIf({ initialBuy, initialUsd, fx, model, source }) {
         </div>
       </div>
       <div className="wi-field">
-        <label htmlFor="wi-usd">
-          <span>売却額(USD)</span>
-          <span className="num">{fmtUsd(usd)}</span>
+        <label htmlFor="wi-sell">
+          <span>{isMercari ? "想定売値(円)" : "売却額(USD)"}</span>
+          <span className="num">{isMercari ? fmtYen(sell) : fmtUsd(sell)}</span>
         </label>
         <div className="wi-inputs">
           <input
-            id="wi-usd"
+            id="wi-sell"
             type="number"
             min="0"
-            step="1"
-            value={usd}
-            onChange={(e) => setUsd(Number(e.target.value))}
+            step={sellStep}
+            value={sell}
+            onChange={(e) => setSell(Number(e.target.value))}
           />
           <input
             type="range"
             min="0"
-            max={usdMax}
-            step="1"
-            value={Math.min(usd, usdMax)}
-            onChange={(e) => setUsd(Number(e.target.value))}
-            aria-label="売却額スライダー"
+            max={sellMax}
+            step={sellStep}
+            value={Math.min(sell, sellMax)}
+            onChange={(e) => setSell(Number(e.target.value))}
+            aria-label={isMercari ? "想定売値スライダー" : "売却額スライダー"}
           />
         </div>
       </div>
@@ -150,7 +172,7 @@ function WhatIf({ initialBuy, initialUsd, fx, model, source }) {
         className="btn btn-sm wi-reset"
         onClick={() => {
           setBuy(initialBuy);
-          setUsd(initialUsd);
+          setSell(initialSell);
         }}
       >
         初期値に戻す
@@ -170,6 +192,7 @@ export default function Drawer({
 }) {
   const panelRef = useRef(null);
   const [range, setRange] = useState(90);
+  const [seriesChoice, setSeriesChoice] = useState(null); // null = 自動(新しい方)
 
   // ESC で閉じる + 簡易フォーカストラップ + 背景スクロールロック
   useEffect(() => {
@@ -206,28 +229,69 @@ export default function Drawer({
     };
   }, [onClose, card && card.card_id]);
 
+  // カードが変わったらチャート系列の手動選択をリセット
+  useEffect(() => {
+    setSeriesChoice(null);
+  }, [card && card.card_id]);
+
   const model = summary && summary.profit_model;
   const fx = (deal && deal.fx_rate) || (summary && summary.fx_rate) || 150;
   const generatedAt = summary && summary.generated_at;
+  const mk = deal ? marketOf(deal) : null;
 
-  const points = useMemo(() => {
-    const pts = (histCard && histCard.points) || [];
-    return pts.slice(-range);
-  }, [histCard, range]);
+  const ebayPts = (histCard && histCard.points) || [];
+  const mercPts = (histCard && histCard.mercari_points) || [];
+
+  // チャート初期系列: 両方あれば新しい日付の方、片方だけならその系列
+  const autoSeries = useMemo(() => {
+    if (ebayPts.length === 0 && mercPts.length > 0) return "mercari";
+    if (mercPts.length === 0) return "ebay";
+    const lastEbay = ebayPts[ebayPts.length - 1].date || "";
+    const lastMerc = mercPts[mercPts.length - 1].date || "";
+    return lastMerc > lastEbay ? "mercari" : "ebay";
+  }, [histCard]);
+  const series = seriesChoice || autoSeries;
+  const chartCurrency = series === "mercari" ? "JPY" : "USD";
+
+  // PriceChart 用に {date, median, min, max, count} へ正規化
+  const chartPoints = useMemo(() => {
+    const src = series === "mercari" ? mercPts : ebayPts;
+    return src.slice(-range).map((p) =>
+      series === "mercari"
+        ? { date: p.date, median: p.median_jpy, min: p.min_jpy, max: p.max_jpy, count: p.count }
+        : { date: p.date, median: p.median_usd, min: p.min_usd, max: p.max_usd, count: p.count }
+    );
+  }, [histCard, series, range]);
 
   const snaps = useMemo(() => {
-    const pts = (histCard && histCard.points) || [];
-    return pts.slice(-10).reverse();
-  }, [histCard]);
+    const src = series === "mercari" ? mercPts : ebayPts;
+    return src
+      .slice(-10)
+      .reverse()
+      .map((p) =>
+        series === "mercari"
+          ? { date: p.date, median: p.median_jpy, min: p.min_jpy, max: p.max_jpy, count: p.count }
+          : { date: p.date, median: p.median_usd, min: p.min_usd, max: p.max_usd, count: p.count }
+      );
+  }, [histCard, series]);
 
-  const latestMedian =
-    (deal && deal.ebay_median_usd) ??
-    (histCard && histCard.points && histCard.points.length > 0
-      ? histCard.points[histCard.points.length - 1].median_usd
-      : 0);
-
+  // What-if のモード: 案件があればその相場ソース、なければ履歴のある方
+  const whatifMode = deal ? mk.source : autoSeries;
   const whatifSource = (deal && deal.source) || "mercari";
-  const initialBuy = deal ? deal.buy_price_jpy : breakevenBuy({ usd: latestMedian, fx, model, source: whatifSource });
+  const latestSell = deal
+    ? mk.median ?? 0
+    : whatifMode === "mercari"
+      ? (mercPts.length > 0 ? mercPts[mercPts.length - 1].median_jpy : 0)
+      : (ebayPts.length > 0 ? ebayPts[ebayPts.length - 1].median_usd : 0);
+  const initialBuy = deal
+    ? deal.buy_price_jpy
+    : whatifMode === "mercari"
+      ? breakevenBuyMercari({ sellJpy: latestSell, model, source: whatifSource })
+      : breakevenBuy({ usd: latestSell, fx, model, source: whatifSource });
+  const mercariSell = mercariSellParams(model);
+
+  // 売り切れ検索リンク: メルカリ相場ならメルカリSold、それ以外は eBay Sold
+  const soldSource = deal ? mk.source : (ebayPts.length === 0 && mercPts.length > 0 ? "mercari" : "ebay");
 
   const others = (cardDeals || []).filter((d) => !deal || dealKey(d) !== dealKey(deal));
   const isNew = deal && isNewDeal(deal, generatedAt);
@@ -271,9 +335,15 @@ export default function Drawer({
                   出品を開く ↗
                 </a>
               ) : null}
-              <a className="btn btn-sm" href={ebaySoldUrl(card)} target="_blank" rel="noopener noreferrer">
-                eBay Soldを確認 ↗
-              </a>
+              {soldSource === "mercari" ? (
+                <a className="btn btn-sm" href={mercariSoldUrl(card)} target="_blank" rel="noopener noreferrer">
+                  メルカリSoldを確認 ↗
+                </a>
+              ) : (
+                <a className="btn btn-sm" href={ebaySoldUrl(card)} target="_blank" rel="noopener noreferrer">
+                  eBay Soldを確認 ↗
+                </a>
+              )}
             </div>
           </div>
           <button type="button" className="icon-btn drawer-close" onClick={onClose} aria-label="閉じる">
@@ -292,11 +362,11 @@ export default function Drawer({
                   <div className="ds-value">{fmtYen(deal.buy_price_jpy)}</div>
                 </div>
                 <div className="ds">
-                  <div className="ds-label">eBay相場(中央値)</div>
+                  <div className="ds-label">{marketLabel(mk.source)}(中央値)</div>
                   <div className="ds-value">
-                    {fmtUsd(deal.ebay_median_usd)}{" "}
+                    {fmtMarket(mk.median, mk.currency)}{" "}
                     <span className="muted" style={{ fontSize: 10.5, fontWeight: 500 }}>
-                      {deal.ebay_count_30d}件/30日
+                      {mk.count}件/30日
                     </span>
                   </div>
                 </div>
@@ -316,7 +386,7 @@ export default function Drawer({
                     <ScoreBadge deal={deal} />
                   </span>
                 </h3>
-                <PlBreakdown deal={deal} />
+                <PlBreakdown deal={deal} marketSource={mk.source} />
               </div>
             </>
           ) : (
@@ -328,20 +398,40 @@ export default function Drawer({
           <div className="drawer-section">
             <h3>What-if シミュレータ</h3>
             <WhatIf
+              mode={whatifMode}
               initialBuy={Math.round(initialBuy)}
-              initialUsd={Math.round(latestMedian * 100) / 100}
+              initialSell={whatifMode === "mercari" ? Math.round(latestSell) : Math.round(latestSell * 100) / 100}
               fx={fx}
               model={model}
               source={whatifSource}
             />
             <p className="planner-note">
-              為替 {fx ? fx.toFixed(2) : "—"} 円/$、eBay手数料・送料は summary.json の profit_model と同一パラメータで計算。
+              {whatifMode === "mercari"
+                ? `メルカリ販売手数料 ${fmtPct(mercariSell.fee_rate, 0)}・発送送料 ${fmtYen(mercariSell.shipping_jpy)} で計算(メルカリ内完結のため為替は関与しません)。`
+                : `為替 ${fx ? fx.toFixed(2) : "—"} 円/$、eBay手数料・送料は summary.json の profit_model と同一パラメータで計算。`}
             </p>
           </div>
 
           <div className="drawer-section">
-            <h3 style={{ display: "flex", alignItems: "center" }}>
+            <h3 style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
               価格チャート
+              {ebayPts.length > 0 && mercPts.length > 0 && (
+                <span className="range-chips" role="group" aria-label="相場ソース切替">
+                  {[
+                    { id: "ebay", label: "eBay $" },
+                    { id: "mercari", label: "メルカリ ¥" },
+                  ].map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      className={`filter-chip${series === s.id ? " active" : ""}`}
+                      onClick={() => setSeriesChoice(s.id)}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </span>
+              )}
               <span className="range-chips" role="group" aria-label="表示期間">
                 {[30, 60, 90].map((d) => (
                   <button
@@ -355,7 +445,7 @@ export default function Drawer({
                 ))}
               </span>
             </h3>
-            <PriceChart points={points} />
+            <PriceChart points={chartPoints} currency={chartCurrency} />
           </div>
 
           <div className="drawer-section">
@@ -376,9 +466,9 @@ export default function Drawer({
                   {snaps.map((p) => (
                     <tr key={p.date}>
                       <td>{p.date}</td>
-                      <td>{fmtUsd(p.median_usd)}</td>
+                      <td>{fmtMarket(p.median, chartCurrency)}</td>
                       <td>
-                        {fmtUsd(p.min_usd)}〜{fmtUsd(p.max_usd)}
+                        {fmtMarket(p.min, chartCurrency)}〜{fmtMarket(p.max, chartCurrency)}
                       </td>
                       <td>{p.count}</td>
                     </tr>

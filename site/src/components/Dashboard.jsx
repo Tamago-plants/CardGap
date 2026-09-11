@@ -5,6 +5,7 @@ import CardThumb from "./CardThumb.jsx";
 import HoverTip from "./HoverTip.jsx";
 import ScoreBadge from "./ScoreBadge.jsx";
 import {
+  fmtMarket,
   fmtPct,
   fmtSignedPct,
   fmtSignedYen,
@@ -12,7 +13,7 @@ import {
   fmtYen,
   sourceLabel,
 } from "../lib/format.js";
-import { isAboveThreshold, isNewDeal } from "../lib/data.js";
+import { isAboveThreshold, isNewDeal, marketOf } from "../lib/data.js";
 import { opportunityScore } from "../lib/score.js";
 
 /** データ未投入時のオンボーディング */
@@ -81,6 +82,15 @@ export default function Dashboard({ deals, summary, noData, onOpenDeal, onOpenCa
   const bestRateDeal = above.find((d) => d.profit_rate === bestRate);
   const sumProfit = above.reduce((a, d) => a + (d.profit_jpy || 0), 0);
   const { runs, failed } = healthInfo(summary);
+
+  // 騰落ボードのデータ。eBay相場が空の期間はメルカリ売却相場ボードが場所を引き継ぐ
+  const ebayUp = (summary && summary.movers_up) || [];
+  const ebayDown = (summary && summary.movers_down) || [];
+  const mercUp = (summary && summary.mercari_movers_up) || [];
+  const mercDown = (summary && summary.mercari_movers_down) || [];
+  const mercSell = (summary && summary.mercari_top_selling) || [];
+  const hasEbayMovers = ebayUp.length > 0 || ebayDown.length > 0;
+  const hasMercariMovers = mercUp.length > 0 || mercDown.length > 0;
 
   if (noData) return <Onboarding />;
 
@@ -185,8 +195,16 @@ export default function Dashboard({ deals, summary, noData, onOpenDeal, onOpenCa
                 <div className="hero-body">
                   <div className="hero-name">{d.display_name}</div>
                   <div className="hero-flow">
-                    {sourceLabel(d.source)} <b>{fmtYen(d.buy_price_jpy)}</b> → eBay{" "}
-                    <b>{fmtUsd(d.ebay_median_usd)}</b>
+                    {(() => {
+                      const mk = marketOf(d);
+                      return (
+                        <>
+                          {sourceLabel(d.source)} <b>{fmtYen(d.buy_price_jpy)}</b> →{" "}
+                          {mk.source === "mercari" ? "メルカリ相場" : "eBay"}{" "}
+                          <b>{fmtMarket(mk.median, mk.currency)}</b>
+                        </>
+                      );
+                    })()}
                   </div>
                   <div className={`hero-profit ${d.profit_jpy >= 0 ? "pos" : "neg"}`}>
                     {fmtSignedYen(d.profit_jpy)}
@@ -215,44 +233,110 @@ export default function Dashboard({ deals, summary, noData, onOpenDeal, onOpenCa
         )}
       </section>
 
-      {/* 急騰 / 急落 */}
-      <section className="section" aria-label="急騰・急落">
-        <div className="section-head">
-          <h2 className="section-title">急騰 / 急落</h2>
-          <span className="section-sub">eBay Sold 中央値の前回スナップショット比</span>
-        </div>
-        <div className="movers-grid">
-          {[
-            { label: "急騰", arrow: "▲", list: (summary && summary.movers_up) || [], cls: "pos" },
-            { label: "急落", arrow: "▼", list: (summary && summary.movers_down) || [], cls: "neg" },
-          ].map((grp) => (
-            <div key={grp.label} className="card mover-panel">
-              <h3>
-                <span className={grp.cls}>{grp.arrow}</span> {grp.label}
-              </h3>
-              {grp.list.length === 0 ? (
-                <div className="empty-note" style={{ padding: "14px 0" }}>
-                  比較できるスナップショットがありません
-                </div>
-              ) : (
-                grp.list.map((m) => (
-                  <button key={m.card_id} type="button" className="mover-row" onClick={() => onOpenCard(m.card_id)}>
-                    <span className="mover-name">{m.display_name}</span>
-                    <span className="mover-usd">
-                      {fmtUsd(m.prev_median_usd)} → <b>{fmtUsd(m.median_usd)}</b>{" "}
-                      <span className="cnt">({m.count}件)</span>
-                    </span>
-                    <span className={`mover-chg ${m.change_rate >= 0 ? "pos" : "neg"}`}>
-                      {m.change_rate >= 0 ? "▲" : "▼"}
-                      {fmtSignedPct(m.change_rate)}
-                    </span>
-                  </button>
-                ))
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
+      {/* 急騰 / 急落(eBay)。空のときはメルカリボードが場所を引き継ぐ */}
+      {(hasEbayMovers || (!hasMercariMovers && mercSell.length === 0)) && (
+        <section className="section" aria-label="急騰・急落">
+          <div className="section-head">
+            <h2 className="section-title">急騰 / 急落</h2>
+            <span className="section-sub">eBay Sold 中央値の前回スナップショット比</span>
+          </div>
+          <div className="movers-grid">
+            {[
+              { label: "急騰", arrow: "▲", list: ebayUp, cls: "pos" },
+              { label: "急落", arrow: "▼", list: ebayDown, cls: "neg" },
+            ].map((grp) => (
+              <div key={grp.label} className="card mover-panel">
+                <h3>
+                  <span className={grp.cls}>{grp.arrow}</span> {grp.label}
+                </h3>
+                {grp.list.length === 0 ? (
+                  <div className="empty-note" style={{ padding: "14px 0" }}>
+                    比較できるスナップショットがありません
+                  </div>
+                ) : (
+                  grp.list.map((m) => (
+                    <button key={m.card_id} type="button" className="mover-row" onClick={() => onOpenCard(m.card_id)}>
+                      <span className="mover-name">{m.display_name}</span>
+                      <span className="mover-usd">
+                        {fmtUsd(m.prev_median_usd)} → <b>{fmtUsd(m.median_usd)}</b>{" "}
+                        <span className="cnt">({m.count}件)</span>
+                      </span>
+                      <span className={`mover-chg ${m.change_rate >= 0 ? "pos" : "neg"}`}>
+                        {m.change_rate >= 0 ? "▲" : "▼"}
+                        {fmtSignedPct(m.change_rate)}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* メルカリ相場 急騰 / 急落 */}
+      {hasMercariMovers && (
+        <section className="section" aria-label="メルカリ相場の急騰・急落">
+          <div className="section-head">
+            <h2 className="section-title">メルカリ相場 急騰 / 急落</h2>
+            <span className="section-sub">メルカリ売却中央値(円)の前回スナップショット比</span>
+          </div>
+          <div className="movers-grid">
+            {[
+              { label: "急騰", arrow: "▲", list: mercUp, cls: "pos" },
+              { label: "急落", arrow: "▼", list: mercDown, cls: "neg" },
+            ].map((grp) => (
+              <div key={grp.label} className="card mover-panel">
+                <h3>
+                  <span className={grp.cls}>{grp.arrow}</span> {grp.label}
+                </h3>
+                {grp.list.length === 0 ? (
+                  <div className="empty-note" style={{ padding: "14px 0" }}>
+                    比較できるスナップショットがありません
+                  </div>
+                ) : (
+                  grp.list.map((m) => (
+                    <button key={m.card_id} type="button" className="mover-row" onClick={() => onOpenCard(m.card_id)}>
+                      <span className="mover-name">{m.display_name}</span>
+                      <span className="mover-usd">
+                        {fmtYen(m.prev_median_jpy)} → <b>{fmtYen(m.median_jpy)}</b>{" "}
+                        <span className="cnt">({m.count}件)</span>
+                      </span>
+                      <span className={`mover-chg ${m.change_rate >= 0 ? "pos" : "neg"}`}>
+                        {m.change_rate >= 0 ? "▲" : "▼"}
+                        {fmtSignedPct(m.change_rate)}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* メルカリ売れ筋 */}
+      {mercSell.length > 0 && (
+        <section className="section" aria-label="メルカリ売れ筋">
+          <div className="section-head">
+            <h2 className="section-title">メルカリ売れ筋</h2>
+            <span className="section-sub">直近30日にメルカリで売れた件数ランキング</span>
+          </div>
+          <div className="card mover-panel">
+            {mercSell.slice(0, 5).map((m, i) => (
+              <button key={m.card_id} type="button" className="mover-row" onClick={() => onOpenCard(m.card_id)}>
+                <span className="mover-name">
+                  {i + 1}. {m.display_name}
+                </span>
+                <span className="mover-usd">
+                  中央値 <b>{fmtYen(m.median_jpy)}</b>
+                </span>
+                <span className="mover-chg">{m.count}件</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* 新着案件 */}
       <section className="section" aria-label="新着案件">
