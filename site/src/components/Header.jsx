@@ -1,6 +1,6 @@
 // スティッキーヘッダ: ロゴ / 横断検索 / 更新時刻(JST+相対) / USD/JPY / テーマ切替 / タブ。
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fmtDateTimeJst, fmtRelative } from "../lib/format.js";
+import { categoryLabel, fmtDateTimeJst, fmtRelative } from "../lib/format.js";
 import { searchCards } from "../lib/data.js";
 
 const TABS = [
@@ -121,7 +121,18 @@ function SearchBox({ index, onOpenCard }) {
   );
 }
 
-export default function Header({ summary, searchIndex, path, onNavigate, theme, onToggleTheme, onOpenCard }) {
+export default function Header({
+  summary,
+  searchIndex,
+  path,
+  onNavigate,
+  theme,
+  onToggleTheme,
+  onOpenCard,
+  cats,
+  cat,
+  onSetCat,
+}) {
   const generatedAt = summary && summary.generated_at;
   const fx = summary && summary.fx_rate;
   return (
@@ -175,6 +186,22 @@ export default function Header({ summary, searchIndex, path, onNavigate, theme, 
           </button>
         ))}
       </nav>
+      {/* グローバルカテゴリフィルタ(全タブ共通) */}
+      {cats && cats.length > 0 && (
+        <div className="cat-row" role="group" aria-label="カテゴリフィルタ(全画面共通)">
+          {["all", ...cats].map((c) => (
+            <button
+              key={c}
+              type="button"
+              className={`filter-chip${cat === c ? " active" : ""}`}
+              aria-pressed={cat === c}
+              onClick={() => onSetCat(c)}
+            >
+              {c === "all" ? "すべて" : categoryLabel(c)}
+            </button>
+          ))}
+        </div>
+      )}
     </header>
   );
 }

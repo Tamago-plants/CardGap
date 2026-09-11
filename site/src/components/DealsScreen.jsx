@@ -102,15 +102,18 @@ function FilterPopover({ params, setParams, categories, onClose }) {
 
   return (
     <div className="popover" ref={ref} role="dialog" aria-label="詳細フィルタ">
-      <div className="pop-group">
-        <h4>カテゴリ</h4>
-        {categories.map((c) => (
-          <label key={c} className="cb">
-            <input type="checkbox" checked={cats.includes(c)} onChange={() => toggleIn("cat", cats, c)} />
-            {categoryLabel(c)}
-          </label>
-        ))}
-      </div>
+      {/* グローバルカテゴリフィルタ適用中(categories空)はカテゴリ群を出さない */}
+      {categories.length > 0 && (
+        <div className="pop-group">
+          <h4>カテゴリ</h4>
+          {categories.map((c) => (
+            <label key={c} className="cb">
+              <input type="checkbox" checked={cats.includes(c)} onChange={() => toggleIn("cat", cats, c)} />
+              {categoryLabel(c)}
+            </label>
+          ))}
+        </div>
+      )}
       <div className="pop-group">
         <h4>確度</h4>
         {["high", "medium", "low"].map((c) => (
@@ -175,7 +178,7 @@ function FilterPopover({ params, setParams, categories, onClose }) {
   );
 }
 
-export default function DealsScreen({ deals, history, summary, params, setParams, onOpenDeal }) {
+export default function DealsScreen({ deals, history, summary, globalCat, params, setParams, onOpenDeal }) {
   const [popOpen, setPopOpen] = useState(false);
   const thresholds = summary && summary.thresholds;
   const generatedAt = summary && summary.generated_at;
@@ -191,7 +194,15 @@ export default function DealsScreen({ deals, history, summary, params, setParams
     return m;
   }, [history]);
 
-  const categories = useMemo(() => Array.from(new Set(deals.map((d) => d.category).filter(Boolean))), [deals]);
+  // グローバルカテゴリフィルタ適用中は deals が単一カテゴリ済みなので、
+  // 画面内のカテゴリフィルタUIは出さない(1択のチェックボックスになるだけのため)
+  const categories = useMemo(
+    () =>
+      globalCat && globalCat !== "all"
+        ? []
+        : Array.from(new Set(deals.map((d) => d.category).filter(Boolean))),
+    [deals, globalCat]
+  );
 
   // 相場列の見出し: 全案件が同一ソースならそのラベル、混在なら中立の「相場」
   const marketHead = useMemo(() => {
@@ -199,8 +210,16 @@ export default function DealsScreen({ deals, history, summary, params, setParams
     return srcSet.size === 1 ? marketLabel(srcSet.values().next().value) : "相場";
   }, [deals]);
 
+  // グローバルカテゴリ適用中は詳細フィルタ側のカテゴリ指定(古いURL等)を無視する。
+  // deals が単一カテゴリ済みのため交差すると必ず0件になり、チェックUIも隠れていて
+  // 解除できなくなるため
+  const paramCats = useMemo(
+    () => (globalCat && globalCat !== "all" ? [] : splitCsv(params.cat)),
+    [globalCat, params.cat]
+  );
+
   const rows = useMemo(() => {
-    const cats = splitCsv(params.cat);
+    const cats = paramCats;
     const confs = splitCsv(params.conf);
     const mr = params.mr != null && params.mr !== "" ? Number(params.mr) / 100 : null;
     const mp = params.mp != null && params.mp !== "" ? Number(params.mp) : null;
@@ -218,7 +237,7 @@ export default function DealsScreen({ deals, history, summary, params, setParams
     const get = SORTS[sortKey].get;
     list.sort((a, b) => (sortDir === "asc" ? get(a) - get(b) : get(b) - get(a)));
     return list;
-  }, [deals, params.f, params.src, params.cat, params.conf, params.rel, params.mr, params.mp, sortKey, sortDir, thresholds, generatedAt]);
+  }, [deals, params.f, params.src, paramCats, params.conf, params.rel, params.mr, params.mp, sortKey, sortDir, thresholds, generatedAt]);
 
   const toggleFlag = (id) => {
     const next = flags.includes(id) ? flags.filter((f) => f !== id) : [...flags, id];
@@ -230,7 +249,7 @@ export default function DealsScreen({ deals, history, summary, params, setParams
   };
   const clearAll = () => setParams({ f: null, src: null, cat: null, conf: null, rel: null, mr: null, mp: null });
   const anyFilter =
-    flags.length > 0 || srcs.length > 0 || params.cat || params.conf || params.rel || params.mr || params.mp;
+    flags.length > 0 || srcs.length > 0 || paramCats.length > 0 || params.conf || params.rel || params.mr || params.mp;
 
   const onSort = (key) => {
     if (sortKey === key) {
@@ -244,7 +263,7 @@ export default function DealsScreen({ deals, history, summary, params, setParams
   const activeLabels = [
     ...flags.map((f) => (QUICK.find((q) => q.id === f) || {}).label).filter(Boolean),
     ...srcs.map(sourceLabel),
-    ...(params.cat ? splitCsv(params.cat).map(categoryLabel) : []),
+    ...paramCats.map(categoryLabel),
     ...(params.conf ? splitCsv(params.conf).map((c) => `確度${c}`) : []),
     ...(params.rel === "ok" ? ["信頼ok"] : []),
     ...(params.mr ? [`利益率≥${params.mr}%`] : []),

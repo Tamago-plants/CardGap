@@ -79,3 +79,4 @@ export:
   history_days: 90               # 価格推移チャートに含める日数
   top_n: 10                      # summary.json のランキング件数
   movers_n: 5                    # 騰落(上昇/下落)の表示件数
+  primary_category: "naruto"     # サイト・Discordダイジェストで優先表示するカテゴリ(空なら従来どおり全カテゴリ横断)

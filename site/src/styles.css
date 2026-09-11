@@ -341,6 +341,23 @@ button {
   border-bottom-color: var(--accent);
 }
 
+/* グローバルカテゴリフィルタ(ヘッダ第3行、全タブ共通) */
+.cat-row {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 8px 22px 9px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  border-top: 1px solid var(--border);
+}
+.cat-row .filter-chip {
+  flex: 0 0 auto;
+  padding: 3px 11px;
+  font-size: 11.5px;
+}
+
 /* ---------- 汎用パーツ ---------- */
 .chip {
   display: inline-flex;
@@ -636,6 +653,7 @@ button {
 }
 .kpi {
   padding: 14px 16px 12px;
+  min-width: 0; /* nowrap の .kpi-sub がグリッド列をはみ出させないように */
 }
 .kpi-label {
   font-size: 11.5px;
@@ -1776,6 +1794,9 @@ table.deals tbody tr:hover {
   }
   .tabs {
     padding: 4px 14px 0;
+  }
+  .cat-row {
+    padding: 7px 14px 8px;
   }
   .hdr-meta {
     gap: 12px;

@@ -207,8 +207,12 @@ def _compute_mercari_movers(
     return movers
 
 
-def _mercari_top_selling(conn: sqlite3.Connection, top_n: int) -> list[dict[str, Any]]:
-    """直近30日にメルカリで売れた件数が多いカードのランキング(売れ筋)。"""
+def _mercari_top_selling_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """直近30日にメルカリで売れた件数が多いカードのランキング(売れ筋)の全行。
+
+    カット(top_n)は呼び出し側で行う。カテゴリ別ボードはカット前の全行から
+    作る必要があるため、行の組み立てとカットをここで分離している。
+    """
     rows: list[dict[str, Any]] = []
     for card in db.list_cards(conn, enabled_only=False):
         snaps = db.latest_two_mercari_snapshots(conn, card.id)
@@ -226,7 +230,28 @@ def _mercari_top_selling(conn: sqlite3.Connection, top_n: int) -> list[dict[str,
             }
         )
     rows.sort(key=lambda r: (r["count"], r["median_jpy"]), reverse=True)
-    return rows[:top_n]
+    return rows
+
+
+def _per_category(
+    rows: list[dict[str, Any]],
+    sort_key: Any,
+    limit: int,
+    reverse: bool = True,
+) -> dict[str, list[dict[str, Any]]]:
+    """行をカテゴリ別に分け、各カテゴリ内でソートして上位 limit 件に切る。
+
+    必ず「グローバルの top_n カット前」の全行を渡すこと。カット後のリストから
+    作ると、上位が特定カテゴリ(例: ポケモン一色)のとき他カテゴリの行が
+    丸ごと消えてしまう。
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        grouped.setdefault(r["category"], []).append(r)
+    return {
+        cat: sorted(items, key=sort_key, reverse=reverse)[:limit]
+        for cat, items in grouped.items()
+    }
 
 
 def build_summary_payload(cfg: Config, conn: sqlite3.Connection) -> dict[str, Any]:
@@ -254,19 +279,32 @@ def build_summary_payload(cfg: Config, conn: sqlite3.Connection) -> dict[str, An
         [m for m in movers if m["change_rate"] < 0], key=lambda m: m["change_rate"]
     )[:movers_n]
     m_movers = _compute_mercari_movers(conn)
+    m_movers_up_all = [m for m in m_movers if m["change_rate"] > 0]
+    m_movers_down_all = [m for m in m_movers if m["change_rate"] < 0]
     mercari_up = sorted(
-        [m for m in m_movers if m["change_rate"] > 0],
+        m_movers_up_all,
         key=lambda m: m["change_rate"],
         reverse=True,
     )[:movers_n]
-    mercari_down = sorted(
-        [m for m in m_movers if m["change_rate"] < 0], key=lambda m: m["change_rate"]
-    )[:movers_n]
+    mercari_down = sorted(m_movers_down_all, key=lambda m: m["change_rate"])[:movers_n]
+    top_selling_rows = _mercari_top_selling_rows(conn)
+
+    # 優先カテゴリ(例: naruto)。設定が空なら None = 従来どおり全カテゴリ横断
+    primary = str(cfg.get("export.primary_category", "") or "") or None
+    # サイトのカテゴリチップ用: データに実際に現れるカテゴリの一覧
+    categories = sorted(
+        {r["category"] for r in all_rows}
+        | {r["category"] for r in top_selling_rows}
+        | {m["category"] for m in m_movers}
+        | {m["category"] for m in movers}  # eBay騰落にしか現れないカテゴリも拾う
+    )
 
     return {
         "generated_at": _now_iso(),
         "date": date.today().isoformat(),
         "site_url": cfg.get("export.site_url", "") or None,  # Discordダイジェストのリンク用
+        "primary_category": primary,
+        "categories": categories,
         "fx_rate": db.latest_fx_rate(conn),
         "thresholds": {
             "min_profit_jpy": min_profit,
@@ -301,12 +339,30 @@ def build_summary_payload(cfg: Config, conn: sqlite3.Connection) -> dict[str, An
         "deal_count_above_threshold": len(above),
         "top_by_rate": sorted(above, key=lambda r: r["profit_rate"], reverse=True)[:top_n],
         "top_by_profit": sorted(above, key=lambda r: r["profit_jpy"], reverse=True)[:top_n],
+        # カテゴリ別ボード({category: list})。グローバル版と同じ行形状・同じ
+        # カット件数だが、カット前の全行から作る(グローバル上位が特定カテゴリ
+        # 一色でも優先カテゴリの行が落ちないようにするため)
+        "top_by_rate_by_category": _per_category(
+            above, lambda r: r["profit_rate"], top_n
+        ),
+        "top_by_profit_by_category": _per_category(
+            above, lambda r: r["profit_jpy"], top_n
+        ),
         "movers_up": movers_up,
         "movers_down": movers_down,
         "market_mode": str(cfg.get("market.source", "auto")),
         "mercari_movers_up": mercari_up,
         "mercari_movers_down": mercari_down,
-        "mercari_top_selling": _mercari_top_selling(conn, top_n),
+        "mercari_movers_up_by_category": _per_category(
+            m_movers_up_all, lambda m: m["change_rate"], movers_n
+        ),
+        "mercari_movers_down_by_category": _per_category(
+            m_movers_down_all, lambda m: m["change_rate"], movers_n, reverse=False
+        ),
+        "mercari_top_selling": top_selling_rows[:top_n],
+        "mercari_top_selling_by_category": _per_category(
+            top_selling_rows, lambda r: (r["count"], r["median_jpy"]), top_n
+        ),
         "scrape_health": [
             {
                 "source": r["source"],

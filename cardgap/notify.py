@@ -28,6 +28,9 @@ _DISCORD_MAX_EMBEDS = 10
 # 仕入元の表示名(embed タイトル用)
 _SOURCE_LABELS = {"mercari": "メルカリ", "snkrdunk": "スニダン"}
 
+# カテゴリの表示名(ダイジェストのタイトル用)。未知のカテゴリは生の名前で出す
+_CATEGORY_LABELS = {"pokemon": "ポケモン", "naruto": "ナルト"}
+
 # embed の色(利益率で段階分け)
 _COLOR_RATE_50 = 0xE74C3C  # 利益率 50% 以上: 赤
 _COLOR_RATE_30 = 0xE67E22  # 利益率 30% 以上: 橙
@@ -257,8 +260,21 @@ def _digest_summary_embed(summary: dict[str, Any]) -> dict[str, Any]:
 
 
 def _digest_ranking_embed(summary: dict[str, Any]) -> dict[str, Any]:
-    """embed「利益率ランキング TOP5」: top_by_rate の先頭5件。空ならその旨。"""
+    """embed「利益率ランキング TOP5」: top_by_rate の先頭5件。空ならその旨。
+
+    優先カテゴリ(primary_category)が設定されていてそのカテゴリの行があれば
+    カテゴリ別リストを使い、タイトルにカテゴリ名を付ける。旧 summary.json
+    (新キーなし)では従来どおり全カテゴリ横断。
+    """
+    title = f"利益率ランキング TOP{_DIGEST_TOP_N}"
     top = (summary.get("top_by_rate") or [])[:_DIGEST_TOP_N]
+    primary = summary.get("primary_category")
+    if primary:
+        primary_top = (summary.get("top_by_rate_by_category") or {}).get(primary) or []
+        if primary_top:
+            top = primary_top[:_DIGEST_TOP_N]
+            label = _CATEGORY_LABELS.get(primary, primary)
+            title = f"利益率ランキング TOP{_DIGEST_TOP_N}({label})"
     if top:
         lines = [
             f"{i}. {r['display_name']} [{r['source']}] 仕入¥{r['buy_price_jpy']:,} "
@@ -269,7 +285,7 @@ def _digest_ranking_embed(summary: dict[str, Any]) -> dict[str, Any]:
     else:
         description = "本日の閾値超え案件はありません"
     return {
-        "title": f"利益率ランキング TOP{_DIGEST_TOP_N}",
+        "title": title,
         "color": _DIGEST_COLOR_RANKING,
         "description": description,
     }
@@ -295,24 +311,80 @@ def _digest_movers_embed(summary: dict[str, Any]) -> dict[str, Any]:
     return {"title": "相場動向", "color": _DIGEST_COLOR_MOVERS, "description": description}
 
 
-def _digest_mercari_embed(summary: dict[str, Any]) -> dict[str, Any] | None:
-    """embed「メルカリ相場」: 売却相場の騰落と売れ筋。データが無ければ None(省略)。"""
+def _mercari_digest_lines(
+    movers_up: list[dict[str, Any]],
+    movers_down: list[dict[str, Any]],
+    top_selling: list[dict[str, Any]],
+) -> list[str]:
+    """メルカリ相場 embed の行(騰落📈📉 + 売れ筋 top5)を組み立てる。
+
+    グローバル版とカテゴリ別版で同じ行フォーマットを共有するための共通部品。
+    """
     lines: list[str] = []
-    for m in summary.get("mercari_movers_up") or []:
+    for m in movers_up:
         lines.append(
             f"📈 {m['display_name']} ¥{m['prev_median_jpy']:,.0f} → ¥{m['median_jpy']:,.0f} "
             f"(+{m['change_rate']:.1%})"
         )
-    for m in summary.get("mercari_movers_down") or []:
+    for m in movers_down:
         lines.append(
             f"📉 {m['display_name']} ¥{m['prev_median_jpy']:,.0f} → ¥{m['median_jpy']:,.0f} "
             f"({m['change_rate']:.1%})"
         )
-    top = summary.get("mercari_top_selling") or []
-    if top:
+    if top_selling:
         lines.append("— 売れ筋(直近30日の売れた数)—")
-        for i, t in enumerate(top[:5], 1):
+        for i, t in enumerate(top_selling[:5], 1):
             lines.append(f"{i}. {t['display_name']} {t['count']}件 / 中央値¥{t['median_jpy']:,.0f}")
+    return lines
+
+
+def _digest_mercari_embed(summary: dict[str, Any]) -> dict[str, Any] | None:
+    """embed「メルカリ相場」: 売却相場の騰落と売れ筋。データが無ければ None(省略)。
+
+    優先カテゴリ(primary_category)が設定されていればそのカテゴリの騰落・売れ筋を
+    先頭に出し、他カテゴリの売れ筋は末尾に3件まで添える。優先カテゴリのデータが
+    1行も無いとき、および旧 summary.json(新キーなし)では従来どおり全カテゴリ横断。
+    """
+    primary = summary.get("primary_category")
+    lines: list[str] = []
+    if primary:
+        lines = _mercari_digest_lines(
+            (summary.get("mercari_movers_up_by_category") or {}).get(primary) or [],
+            (summary.get("mercari_movers_down_by_category") or {}).get(primary) or [],
+            (summary.get("mercari_top_selling_by_category") or {}).get(primary) or [],
+        )
+        if lines:
+            # 優先カテゴリ以外の売れ筋も少しだけ見せる(市況の把握用)。
+            # グローバルの top_n は優先カテゴリで埋まり得るため、カテゴリ別
+            # ボードから集めて件数順に並べ直す(無い旧形式ではグローバルから)
+            by_cat = summary.get("mercari_top_selling_by_category")
+            if by_cat:
+                others = [
+                    t
+                    for cat, rows in by_cat.items()
+                    if cat != primary
+                    for t in rows
+                ]
+                others.sort(key=lambda t: (t["count"], t["median_jpy"]), reverse=True)
+            else:
+                others = [
+                    t
+                    for t in (summary.get("mercari_top_selling") or [])
+                    if t.get("category") != primary
+                ]
+            if others:
+                lines.append("— 他カテゴリの売れ筋 —")
+                for i, t in enumerate(others[:3], 1):
+                    lines.append(
+                        f"{i}. {t['display_name']} {t['count']}件 / 中央値¥{t['median_jpy']:,.0f}"
+                    )
+    if not lines:
+        # primary 未設定、または優先カテゴリのデータが空 → 全カテゴリ横断(従来動作)
+        lines = _mercari_digest_lines(
+            summary.get("mercari_movers_up") or [],
+            summary.get("mercari_movers_down") or [],
+            summary.get("mercari_top_selling") or [],
+        )
     if not lines:
         return None
     return {"title": "メルカリ相場", "color": _DIGEST_COLOR_MOVERS, "description": "\n".join(lines)}

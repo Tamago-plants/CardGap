@@ -10,11 +10,22 @@ import DealsScreen from "./components/DealsScreen.jsx";
 import Drawer from "./components/Drawer.jsx";
 import useHashState from "./hooks/useHashState.js";
 import useTheme from "./hooks/useTheme.js";
-import { buildSearchIndex, dealKey, historyByCard } from "./lib/data.js";
+import { buildSearchIndex, dealKey, historyByCard, knownCategories } from "./lib/data.js";
 import { opportunityScore } from "./lib/score.js";
 
 // 相対パスで fetch する。base: "./" なので Pages のサブパス配下でも解決できる。
 const DATA_FILES = ["./data/deals.json", "./data/history.json", "./data/summary.json"];
+
+// グローバルカテゴリフィルタの localStorage キー
+const CAT_STORAGE_KEY = "cardgap.cat";
+
+function readStoredCat() {
+  try {
+    return window.localStorage.getItem(CAT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
 
 export default function App() {
   const [data, setData] = useState(null); // { deals, history, summary }
@@ -22,6 +33,9 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   // ドロワー選択: {cardId, dealKey|null}
   const [selection, setSelection] = useState(null);
+  // グローバルカテゴリフィルタ("all" | カテゴリ名 | null=未選択)。
+  // 保存値の妥当性はデータ到着後に activeCat で検証する。
+  const [cat, setCatState] = useState(readStoredCat);
 
   const { path, params, navigate, setParams } = useHashState();
   const { theme, toggle: toggleTheme } = useTheme();
@@ -51,6 +65,37 @@ export default function App() {
   const deals = (data && data.deals && data.deals.deals) || [];
   const history = (data && data.history) || null;
   const summary = (data && data.summary) || null;
+
+  // 既知カテゴリ(summary.categories → deals → history の順で導出)
+  const cats = useMemo(() => knownCategories(summary, deals, history), [summary, deals, history]);
+
+  // 有効なカテゴリ選択の解決: 保存値が有効ならそれ、無効なら summary.primary_category、それも無ければ "all"
+  const activeCat = useMemo(() => {
+    if (cat === "all" || (cat && cats.includes(cat))) return cat;
+    if (summary && summary.primary_category && cats.includes(summary.primary_category)) {
+      return summary.primary_category;
+    }
+    return "all";
+  }, [cat, cats, summary]);
+
+  const setCat = useCallback((c) => {
+    setCatState(c);
+    try {
+      window.localStorage.setItem(CAT_STORAGE_KEY, c);
+    } catch {
+      /* localStorage 不可の環境では永続化しない */
+    }
+  }, []);
+
+  // カテゴリで絞った deals / history(各画面に渡す)。検索・ドロワーは未フィルタのまま。
+  const filteredDeals = useMemo(
+    () => (activeCat === "all" ? deals : deals.filter((d) => d.category === activeCat)),
+    [deals, activeCat]
+  );
+  const filteredHistory = useMemo(() => {
+    if (!history || activeCat === "all") return history;
+    return { ...history, cards: (history.cards || []).filter((c) => c.category === activeCat) };
+  }, [history, activeCat]);
 
   const searchIndex = useMemo(
     () => buildSearchIndex(data && data.deals, history),
@@ -116,6 +161,9 @@ export default function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         onOpenCard={openCard}
+        cats={cats}
+        cat={activeCat}
+        onSetCat={setCat}
       />
 
       <main className="container">
@@ -139,8 +187,10 @@ export default function App() {
             )}
             {path === "/dashboard" && (
               <Dashboard
-                deals={deals}
+                deals={filteredDeals}
+                history={filteredHistory}
                 summary={summary}
+                cat={activeCat}
                 noData={noData}
                 onOpenDeal={openDeal}
                 onOpenCard={openCard}
@@ -148,9 +198,10 @@ export default function App() {
             )}
             {path === "/rankings" && (
               <Rankings
-                deals={deals}
-                history={history}
+                deals={filteredDeals}
+                history={filteredHistory}
                 summary={summary}
+                cat={activeCat}
                 params={params}
                 setParams={setParams}
                 onOpenDeal={openDeal}
@@ -159,20 +210,19 @@ export default function App() {
             )}
             {path === "/market" && (
               <MarketMap
-                deals={deals}
-                history={history}
+                deals={filteredDeals}
+                history={filteredHistory}
                 summary={summary}
                 theme={theme}
-                params={params}
-                setParams={setParams}
                 onOpenCard={openCard}
               />
             )}
             {path === "/deals" && (
               <DealsScreen
-                deals={deals}
-                history={history}
+                deals={filteredDeals}
+                history={filteredHistory}
                 summary={summary}
+                globalCat={activeCat}
                 params={params}
                 setParams={setParams}
                 onOpenDeal={openDeal}

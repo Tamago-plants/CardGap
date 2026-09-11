@@ -7,7 +7,7 @@
 import { useMemo, useRef, useState } from "react";
 import { squarify } from "../lib/treemap.js";
 import { divergingColor, inkFor, marketOf } from "../lib/data.js";
-import { categoryLabel, fmtMarket, fmtPct, fmtSignedPct } from "../lib/format.js";
+import { fmtMarket, fmtPct, fmtSignedPct } from "../lib/format.js";
 import { opportunityScore } from "../lib/score.js";
 
 // palette.md のダイバージング用ステップ(light/dark)。中点は中立グレー
@@ -32,10 +32,11 @@ function truncateToWidth(s, maxPx, fs = 13) {
   return out;
 }
 
-export default function MarketMap({ deals, history, summary, theme, params, setParams, onOpenCard }) {
+// カテゴリ絞り込みはヘッダのグローバルフィルタで行う(deals/history はフィルタ済みで渡される)。
+// 旧URLの ?cat= パラメータは読まずに無視する。
+export default function MarketMap({ deals, history, summary, theme, onOpenCard }) {
   const wrapRef = useRef(null);
   const [tip, setTip] = useState(null); // {x, y, node}
-  const catFilter = params.cat || "all";
   const poles = POLES[theme] || POLES.dark;
   const fx = (summary && summary.fx_rate) || 150; // JPY面積のUSD正規化用
 
@@ -95,15 +96,9 @@ export default function MarketMap({ deals, history, summary, theme, params, setP
     return out;
   }, [deals, history, fx]);
 
-  const categories = useMemo(() => {
-    const set = new Set(nodes.map((n) => n.category).filter(Boolean));
-    return ["all", ...Array.from(set)];
-  }, [nodes]);
-
-  const filtered = catFilter === "all" ? nodes : nodes.filter((n) => n.category === catFilter);
   const tiles = useMemo(
-    () => squarify(filtered.slice().sort((a, b) => b.value - a.value), 0, 0, VBW, VBH),
-    [filtered]
+    () => squarify(nodes.slice().sort((a, b) => b.value - a.value), 0, 0, VBW, VBH),
+    [nodes]
   );
 
   const showTip = (e, node) => {
@@ -123,19 +118,9 @@ export default function MarketMap({ deals, history, summary, theme, params, setP
 
   return (
     <div className="card treemap-card">
-      <div className="tm-toolbar" role="group" aria-label="カテゴリフィルタ">
-        {categories.map((c) => (
-          <button
-            key={c}
-            type="button"
-            className={`filter-chip${catFilter === c ? " active" : ""}`}
-            onClick={() => setParams({ cat: c === "all" ? null : c })}
-          >
-            {c === "all" ? "すべて" : categoryLabel(c)}
-          </button>
-        ))}
+      <div className="tm-toolbar">
         <span className="section-sub" style={{ marginLeft: "auto" }}>
-          {filtered.length}カード
+          {nodes.length}カード
         </span>
       </div>
 

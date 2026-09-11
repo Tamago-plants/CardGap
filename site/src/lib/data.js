@@ -64,6 +64,38 @@ export function mercariSoldUrl(cardLike) {
   return `https://jp.mercari.com/search?keyword=${encodeURIComponent(q)}&status=sold_out`;
 }
 
+/**
+ * サマリのボードをカテゴリで解決する。
+ * cat==="all" はグローバルリストをそのまま返す。
+ * カテゴリ指定時はサーバ側でカテゴリ別に切られた "<key>_by_category" を優先し、
+ * 無ければ(旧summary.json や eBay movers など)グローバルリストをクライアント側で絞り込む。
+ * ※ グローバルリストはフィルタ前に上位N件で切られているため、_by_category がある場合は必ずそちらを使う。
+ */
+export function boardFor(summary, key, cat) {
+  const s = summary || {};
+  if (!cat || cat === "all") return s[key] || [];
+  const byCat = s[key + "_by_category"];
+  const list = byCat && byCat[cat];
+  if (Array.isArray(list)) return list;
+  return (s[key] || []).filter((e) => e.category === cat);
+}
+
+/**
+ * 既知カテゴリ一覧: summary.categories → 案件のユニークカテゴリ → 履歴カードのユニークカテゴリ。
+ * (旧 summary.json には categories が無いので deals/history から導出する)
+ */
+export function knownCategories(summary, deals, history) {
+  if (summary && Array.isArray(summary.categories) && summary.categories.length > 0) {
+    return summary.categories;
+  }
+  const set = new Set();
+  for (const d of deals || []) if (d.category) set.add(d.category);
+  if (set.size === 0) {
+    for (const c of (history && history.cards) || []) if (c.category) set.add(c.category);
+  }
+  return Array.from(set);
+}
+
 /** history.cards から card_id → カード のマップを作る */
 export function historyByCard(history) {
   const map = new Map();

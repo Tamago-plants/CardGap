@@ -13,7 +13,7 @@ import {
   fmtYen,
   sourceLabel,
 } from "../lib/format.js";
-import { isAboveThreshold, isNewDeal, marketOf } from "../lib/data.js";
+import { boardFor, computeMovers, isAboveThreshold, isNewDeal, marketOf } from "../lib/data.js";
 import { opportunityScore } from "../lib/score.js";
 
 /** データ未投入時のオンボーディング */
@@ -61,7 +61,7 @@ function healthInfo(summary) {
   return { runs, failed };
 }
 
-export default function Dashboard({ deals, summary, noData, onOpenDeal, onOpenCard }) {
+export default function Dashboard({ deals, history, summary, cat, noData, onOpenDeal, onOpenCard }) {
   const thresholds = summary && summary.thresholds;
   const generatedAt = summary && summary.generated_at;
 
@@ -83,12 +83,23 @@ export default function Dashboard({ deals, summary, noData, onOpenDeal, onOpenCa
   const sumProfit = above.reduce((a, d) => a + (d.profit_jpy || 0), 0);
   const { runs, failed } = healthInfo(summary);
 
-  // 騰落ボードのデータ。eBay相場が空の期間はメルカリ売却相場ボードが場所を引き継ぐ
-  const ebayUp = (summary && summary.movers_up) || [];
-  const ebayDown = (summary && summary.movers_down) || [];
-  const mercUp = (summary && summary.mercari_movers_up) || [];
-  const mercDown = (summary && summary.mercari_movers_down) || [];
-  const mercSell = (summary && summary.mercari_top_selling) || [];
+  // 騰落ボードのデータ(グローバルカテゴリフィルタ適用)。
+  // カテゴリ別リスト(*_by_category)があればそれを使い、無ければグローバルを絞り込む。
+  // eBay騰落だけはカテゴリ別リストがサーバに無いため、フィルタ中は(Rankingsと同様に)
+  // 絞り込み済み history から再計算する。summaryのトップ5を絞ると取りこぼすため
+  const ebayMoversLocal = useMemo(
+    () => (cat && cat !== "all" && history ? computeMovers(history) : null),
+    [history, cat]
+  );
+  const ebayUp = ebayMoversLocal
+    ? ebayMoversLocal.filter((m) => m.change_rate > 0).sort((a, b) => b.change_rate - a.change_rate).slice(0, 5)
+    : boardFor(summary, "movers_up", cat);
+  const ebayDown = ebayMoversLocal
+    ? ebayMoversLocal.filter((m) => m.change_rate < 0).sort((a, b) => a.change_rate - b.change_rate).slice(0, 5)
+    : boardFor(summary, "movers_down", cat);
+  const mercUp = boardFor(summary, "mercari_movers_up", cat);
+  const mercDown = boardFor(summary, "mercari_movers_down", cat);
+  const mercSell = boardFor(summary, "mercari_top_selling", cat);
   const hasEbayMovers = ebayUp.length > 0 || ebayDown.length > 0;
   const hasMercariMovers = mercUp.length > 0 || mercDown.length > 0;
 
@@ -233,8 +244,8 @@ export default function Dashboard({ deals, summary, noData, onOpenDeal, onOpenCa
         )}
       </section>
 
-      {/* 急騰 / 急落(eBay)。空のときはメルカリボードが場所を引き継ぐ */}
-      {(hasEbayMovers || (!hasMercariMovers && mercSell.length === 0)) && (
+      {/* 急騰 / 急落(eBay)。データが無いセクションは空シェルを見せずに隠す */}
+      {hasEbayMovers && (
         <section className="section" aria-label="急騰・急落">
           <div className="section-head">
             <h2 className="section-title">急騰 / 急落</h2>

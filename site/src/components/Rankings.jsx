@@ -18,7 +18,7 @@ import {
   reliabilityLabel,
   sourceLabel,
 } from "../lib/format.js";
-import { computeMovers, marketOf, medianSeries } from "../lib/data.js";
+import { boardFor, computeMovers, marketOf, medianSeries } from "../lib/data.js";
 import { opportunityScore } from "../lib/score.js";
 
 const BOARDS = [
@@ -117,17 +117,19 @@ function Planner({ deals, onOpenDeal }) {
   );
 }
 
-export default function Rankings({ deals, history, summary, params, setParams, onOpenDeal, onOpenCard }) {
+export default function Rankings({ deals, history, summary, cat, params, setParams, onOpenDeal, onOpenCard }) {
   const histMap = useMemo(() => {
     const m = new Map();
     for (const c of (history && history.cards) || []) m.set(c.card_id, c);
     return m;
   }, [history]);
 
+  // eBay騰落は(フィルタ済み)history から再計算。メルカリ系ボードは summary から
+  // グローバルカテゴリフィルタ込みで解決する(カテゴリ別リスト優先)。
   const ebayMovers = useMemo(() => computeMovers(history), [history]);
-  const mUp = (summary && summary.mercari_movers_up) || [];
-  const mDown = (summary && summary.mercari_movers_down) || [];
-  const mSell = (summary && summary.mercari_top_selling) || [];
+  const mUp = useMemo(() => boardFor(summary, "mercari_movers_up", cat), [summary, cat]);
+  const mDown = useMemo(() => boardFor(summary, "mercari_movers_down", cat), [summary, cat]);
+  const mSell = useMemo(() => boardFor(summary, "mercari_top_selling", cat), [summary, cat]);
 
   // データが空のボードはチップを出さない(空シェル防止)
   const visibleBoards = useMemo(() => {
