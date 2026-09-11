@@ -132,7 +132,13 @@ class ProfitResult:
 
 @dataclass
 class Deal:
-    """ダッシュボード/通知に出す1案件 = 仕入れ候補1件 + eBay相場 + 損益。"""
+    """ダッシュボード/通知に出す1案件 = 仕入れ候補1件 + 相場 + 損益。
+
+    market_source が相場の出所と stats の通貨を決める:
+      'ebay'    : eBay Sold 相場(stats は USD)。海外転売の利ざや
+      'mercari' : メルカリ売却相場(stats は JPY)。eBay相場が無い期間の
+                  「メルカリ内で相場より安く出ている出品」の検出に使う
+    """
 
     card: Card
     source: str                  # 'mercari' | 'snkrdunk'
@@ -144,6 +150,7 @@ class Deal:
     confidence: str
     stats: MarketStats
     profit: ProfitResult
+    market_source: str = "ebay"
 
 
 @dataclass

@@ -74,6 +74,13 @@ def _embed_color(profit_rate: float) -> int:
 def build_deal_embed(deal: Deal) -> dict[str, Any]:
     """案件1件を Discord embed(dict)に変換する。"""
     source_label = _SOURCE_LABELS.get(deal.source, deal.source)
+    if deal.market_source == "mercari":
+        # メルカリ売却相場基準: stats の値は円
+        market_name = "メルカリ売却中央値"
+        market_value = f"¥{deal.stats.median_usd:,.0f} ({deal.stats.count}件)"
+    else:
+        market_name = "eBay相場中央値"
+        market_value = f"${deal.stats.median_usd:,.2f} ({deal.stats.count}件)"
     embed: dict[str, Any] = {
         "title": f"{deal.card.display_name()} [{source_label}]",
         "url": deal.listing_url,
@@ -81,8 +88,8 @@ def build_deal_embed(deal: Deal) -> dict[str, Any]:
         "fields": [
             {"name": "仕入価格", "value": f"¥{deal.buy_price_jpy:,}", "inline": True},
             {
-                "name": "eBay相場中央値",
-                "value": f"${deal.stats.median_usd:,.2f} ({deal.stats.count}件)",
+                "name": market_name,
+                "value": market_value,
                 "inline": True,
             },
             {"name": "実質利益", "value": f"¥{round(deal.profit.profit_jpy):,}", "inline": True},
@@ -288,6 +295,29 @@ def _digest_movers_embed(summary: dict[str, Any]) -> dict[str, Any]:
     return {"title": "相場動向", "color": _DIGEST_COLOR_MOVERS, "description": description}
 
 
+def _digest_mercari_embed(summary: dict[str, Any]) -> dict[str, Any] | None:
+    """embed「メルカリ相場」: 売却相場の騰落と売れ筋。データが無ければ None(省略)。"""
+    lines: list[str] = []
+    for m in summary.get("mercari_movers_up") or []:
+        lines.append(
+            f"📈 {m['display_name']} ¥{m['prev_median_jpy']:,.0f} → ¥{m['median_jpy']:,.0f} "
+            f"(+{m['change_rate']:.1%})"
+        )
+    for m in summary.get("mercari_movers_down") or []:
+        lines.append(
+            f"📉 {m['display_name']} ¥{m['prev_median_jpy']:,.0f} → ¥{m['median_jpy']:,.0f} "
+            f"({m['change_rate']:.1%})"
+        )
+    top = summary.get("mercari_top_selling") or []
+    if top:
+        lines.append("— 売れ筋(直近30日の売れた数)—")
+        for i, t in enumerate(top[:5], 1):
+            lines.append(f"{i}. {t['display_name']} {t['count']}件 / 中央値¥{t['median_jpy']:,.0f}")
+    if not lines:
+        return None
+    return {"title": "メルカリ相場", "color": _DIGEST_COLOR_MOVERS, "description": "\n".join(lines)}
+
+
 def build_digest_messages(summary: dict[str, Any]) -> list[dict[str, Any]]:
     """summary から Discord Webhook ペイロードの列を組み立てる(純関数)。
 
@@ -298,8 +328,16 @@ def build_digest_messages(summary: dict[str, Any]) -> list[dict[str, Any]]:
     embeds = [
         _digest_summary_embed(summary),
         _digest_ranking_embed(summary),
-        _digest_movers_embed(summary),
     ]
+    movers_embed = _digest_movers_embed(summary)
+    mercari_embed = _digest_mercari_embed(summary)
+    # eBay騰落が空でメルカリ相場がある期間(メルカリ完結フェーズ)は
+    # 「変動データなし」のプレースホルダを出さずメルカリ側だけ載せる
+    has_ebay_movers = bool(summary.get("movers_up") or summary.get("movers_down"))
+    if has_ebay_movers or mercari_embed is None:
+        embeds.append(movers_embed)
+    if mercari_embed:
+        embeds.append(mercari_embed)
     content = f"📊 CardGap 日次ダイジェスト ({summary['date']})"
     site_url = summary.get("site_url")
     if site_url:

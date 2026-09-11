@@ -88,6 +88,8 @@ CREATE TABLE IF NOT EXISTS matches (
     source            TEXT NOT NULL,             -- 'mercari' | 'snkrdunk'
     source_listing_id INTEGER NOT NULL,
     confidence        TEXT NOT NULL,
+    -- 注意: ebay_median_usd〜ebay_max_usd 列は「相場の数値」を格納する汎用列。
+    -- market_source='ebay' なら USD、'mercari' なら JPY(列名は歴史的経緯)
     ebay_median_usd   REAL NOT NULL,
     ebay_count_30d    INTEGER NOT NULL,
     ebay_min_usd      REAL NOT NULL,
@@ -100,6 +102,7 @@ CREATE TABLE IF NOT EXISTS matches (
     profit_jpy        REAL NOT NULL,
     profit_rate       REAL NOT NULL,
     fx_rate           REAL NOT NULL,
+    market_source     TEXT NOT NULL DEFAULT 'ebay',  -- 相場の出所: 'ebay'(USD) | 'mercari'(JPY)
     computed_at       TEXT NOT NULL
 );
 
@@ -146,6 +149,36 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
     notes          TEXT
 );
 
+-- メルカリの売り切れ(SOLD)出品。「実際に売れた物と価格」の記録で、
+-- eBay相場が無い間のメルカリ内相場(売却中央値)の元データになる。
+-- 売却日時は検索結果に出ないため、初観測日時(first_seen_at)を売却日の近似とする
+-- (1日4回巡回なので誤差は数時間)
+CREATE TABLE IF NOT EXISTS listings_mercari_sold (
+    id               INTEGER PRIMARY KEY,
+    card_id          INTEGER REFERENCES cards(id),
+    title            TEXT NOT NULL,
+    price_jpy        INTEGER NOT NULL,
+    image_url        TEXT,
+    listing_url      TEXT NOT NULL UNIQUE,
+    match_confidence TEXT NOT NULL DEFAULT 'none',
+    raw_query        TEXT,
+    first_seen_at    TEXT,
+    scraped_at       TEXT NOT NULL
+);
+
+-- カード×日付ごとのメルカリ売却相場スナップショット(円)。
+-- 「メルカリ内で相場が動いているカード」の騰落計算とチャートに使う
+CREATE TABLE IF NOT EXISTS mercari_market_history (
+    id         INTEGER PRIMARY KEY,
+    card_id    INTEGER NOT NULL REFERENCES cards(id),
+    date       TEXT NOT NULL,
+    median_jpy REAL NOT NULL,
+    count      INTEGER NOT NULL,     -- 直近30日に売れた件数(観測ベース)
+    min_jpy    REAL NOT NULL,
+    max_jpy    REAL NOT NULL,
+    UNIQUE(card_id, date)
+);
+
 -- カード×日付ごとの eBay 相場スナップショット。matches と違い実行のたびに
 -- 消さず蓄積する(サイトの価格推移チャートと日次ダイジェストの騰落計算用)
 CREATE TABLE IF NOT EXISTS market_history (
@@ -164,6 +197,8 @@ CREATE INDEX IF NOT EXISTS idx_ebay_card_sold ON listings_ebay_sold(card_id, sol
 CREATE INDEX IF NOT EXISTS idx_mercari_card ON listings_mercari(card_id);
 CREATE INDEX IF NOT EXISTS idx_matches_card ON matches(card_id);
 CREATE INDEX IF NOT EXISTS idx_history_card_date ON market_history(card_id, date);
+CREATE INDEX IF NOT EXISTS idx_mercari_sold_card ON listings_mercari_sold(card_id, first_seen_at);
+CREATE INDEX IF NOT EXISTS idx_mhistory_card_date ON mercari_market_history(card_id, date);
 """
 
 
@@ -195,6 +230,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(cards)")}
     if "auto_discovered" not in cols:
         conn.execute("ALTER TABLE cards ADD COLUMN auto_discovered INTEGER NOT NULL DEFAULT 0")
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(matches)")}
+    if "market_source" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN market_source TEXT NOT NULL DEFAULT 'ebay'")
     conn.commit()
 
 
@@ -394,6 +432,103 @@ def deactivate_stale_mercari(
     return cur.rowcount
 
 
+# --------------------------------------------- listings: mercari(SOLD)
+
+def upsert_mercari_sold(conn: sqlite3.Connection, items: Iterable[MercariListing]) -> int:
+    """売り切れ出品の記録。first_seen_at(初観測=売却日の近似)は初回値を保持し、
+    card_id/confidence の上書きは他テーブル同様「最良マッチ勝ち」。"""
+    n = 0
+    now = utcnow()
+    rank_new = _CONF_RANK_SQL.format(col="excluded.match_confidence")
+    rank_old = _CONF_RANK_SQL.format(col="listings_mercari_sold.match_confidence")
+    better = f"(listings_mercari_sold.card_id IS excluded.card_id OR {rank_new} > {rank_old})"
+    for it in items:
+        conn.execute(
+            f"""
+            INSERT INTO listings_mercari_sold
+                (card_id, title, price_jpy, image_url, listing_url,
+                 match_confidence, raw_query, scraped_at, first_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(listing_url) DO UPDATE SET
+                scraped_at = excluded.scraped_at,
+                first_seen_at = COALESCE(listings_mercari_sold.first_seen_at, excluded.first_seen_at),
+                card_id = CASE WHEN {better} THEN excluded.card_id
+                          ELSE listings_mercari_sold.card_id END,
+                match_confidence = CASE WHEN {better} THEN excluded.match_confidence
+                                   ELSE listings_mercari_sold.match_confidence END
+            """,
+            (
+                it.card_id, it.title, it.price_jpy, it.image_url, it.listing_url,
+                it.match_confidence, it.raw_query, now, now,
+            ),
+        )
+        n += 1
+    return n
+
+
+def mercari_sold_for_card(
+    conn: sqlite3.Connection,
+    card_id: int,
+    since_ts: str,
+    min_confidence: tuple[str, ...] = ("high", "medium"),
+) -> list[sqlite3.Row]:
+    """指定カードの since_ts 以降に観測された売却出品(新しい順)。"""
+    marks = ",".join("?" for _ in min_confidence)
+    return conn.execute(
+        f"""
+        SELECT * FROM listings_mercari_sold
+        WHERE card_id = ? AND first_seen_at >= ?
+          AND match_confidence IN ({marks})
+        ORDER BY first_seen_at DESC
+        """,
+        (card_id, since_ts, *min_confidence),
+    ).fetchall()
+
+
+def upsert_mercari_market_snapshot(
+    conn: sqlite3.Connection,
+    card_id: int,
+    date: str,
+    median_jpy: float,
+    count: int,
+    min_jpy: float,
+    max_jpy: float,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO mercari_market_history (card_id, date, median_jpy, count, min_jpy, max_jpy)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(card_id, date) DO UPDATE SET
+            median_jpy = excluded.median_jpy,
+            count = excluded.count,
+            min_jpy = excluded.min_jpy,
+            max_jpy = excluded.max_jpy
+        """,
+        (card_id, date, median_jpy, count, min_jpy, max_jpy),
+    )
+
+
+def mercari_market_history_for_card(
+    conn: sqlite3.Connection, card_id: int, since_date: str | None = None
+) -> list[sqlite3.Row]:
+    if since_date:
+        return conn.execute(
+            "SELECT * FROM mercari_market_history WHERE card_id = ? AND date >= ? ORDER BY date",
+            (card_id, since_date),
+        ).fetchall()
+    return conn.execute(
+        "SELECT * FROM mercari_market_history WHERE card_id = ? ORDER BY date", (card_id,)
+    ).fetchall()
+
+
+def latest_two_mercari_snapshots(conn: sqlite3.Connection, card_id: int) -> list[sqlite3.Row]:
+    """メルカリ売却相場の最新2日分(騰落計算用)。新しい順で最大2行。"""
+    return conn.execute(
+        "SELECT * FROM mercari_market_history WHERE card_id = ? ORDER BY date DESC LIMIT 2",
+        (card_id,),
+    ).fetchall()
+
+
 # -------------------------------------------------- listings: snkrdunk
 
 def upsert_snkrdunk(conn: sqlite3.Connection, items: Iterable[SnkrdunkListing]) -> int:
@@ -442,8 +577,8 @@ def rebuild_matches(conn: sqlite3.Connection, deals: Iterable[Deal]) -> int:
                 (card_id, source, source_listing_id, confidence,
                  ebay_median_usd, ebay_count_30d, ebay_min_usd, ebay_max_usd, reliability,
                  buy_total_jpy, revenue_jpy, ebay_fees_jpy, ship_out_jpy,
-                 profit_jpy, profit_rate, fx_rate, computed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 profit_jpy, profit_rate, fx_rate, market_source, computed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 d.card.id, d.source, d.source_listing_id, d.confidence,
@@ -451,7 +586,7 @@ def rebuild_matches(conn: sqlite3.Connection, deals: Iterable[Deal]) -> int:
                 d.stats.reliability,
                 d.profit.buy_total_jpy, d.profit.revenue_jpy, d.profit.ebay_fees_jpy,
                 d.profit.ship_out_jpy, d.profit.profit_jpy, d.profit.profit_rate,
-                d.profit.fx_rate, now,
+                d.profit.fx_rate, d.market_source, now,
             ),
         )
         n += 1

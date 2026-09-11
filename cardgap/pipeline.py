@@ -17,7 +17,7 @@ from .config import Config, load_config
 from .matching import load_name_dict, match_title
 from .matching.names import NameDict
 from .models import CONF_HIGH, CONF_NONE, Card, Deal, ScrapeStats
-from .profit import profit_for_source
+from .profit import profit_for_mercari_market, profit_for_source
 from .scrape import browser
 from .stats import compute_market_stats
 from .watchlist import import_watchlist
@@ -25,8 +25,10 @@ from .watchlist import import_watchlist
 logger = logging.getLogger(__name__)
 
 # 日本のサイトを先に回す: eBay がブロックされて時間を消費しても、
-# 仕入れ側(メルカリ/スニダン)のデータ収集が道連れにならないようにする
-SOURCES = ("mercari", "snkrdunk", "ebay")
+# 仕入れ側(メルカリ)のデータ収集が道連れにならないようにする。
+# mercari      = 販売中(仕入れ候補)
+# mercari_sold = 売り切れ(メルカリ内の売却相場・売れ筋の元データ)
+SOURCES = ("mercari", "mercari_sold", "snkrdunk", "ebay")
 
 
 def _item_title(item) -> str:
@@ -196,6 +198,8 @@ def run_scrape(
                     db.insert_ebay_sold(conn, parsed.items)
                 elif source == "mercari":
                     db.upsert_mercari(conn, parsed.items)
+                elif source == "mercari_sold":
+                    db.upsert_mercari_sold(conn, parsed.items)
                 elif source == "snkrdunk":
                     db.upsert_snkrdunk(conn, parsed.items)
                 conn.commit()
@@ -229,28 +233,58 @@ def recompute_matches(
     since = (date.today() - timedelta(days=lookback)).isoformat()
     min_count = int(cfg.get("threshold.min_sold_count_30d", 3))
 
+    # 相場の出所: 'auto' は eBay相場があれば eBay(USD)、無ければメルカリ売却相場(JPY)。
+    # eBayが収集できない期間は自動的に「メルカリ内で相場より安い出品」の検出になる
+    market_mode = str(cfg.get("market.source", "auto"))
+
     deals: list[Deal] = []
     for card in db.list_cards(conn):
         if card.is_series_watch():
             continue  # シリーズ監視行は仮想行。相場は自動登録された具体カード側に付く
         rows = db.ebay_sold_for_card(conn, card.id, since)
-        market = compute_market_stats(
+        ebay_market = compute_market_stats(
             [r["price_usd"] + r["shipping_usd"] for r in rows], min_count
         )
+        if ebay_market is not None:
+            # サイトの価格推移チャート・日次ダイジェストの騰落計算用に蓄積する
+            db.upsert_market_snapshot(
+                conn,
+                card_id=card.id,
+                date=date.today().isoformat(),
+                median_usd=ebay_market.median_usd,
+                count=ebay_market.count,
+                min_usd=ebay_market.min_usd,
+                max_usd=ebay_market.max_usd,
+                fx_rate=fx_rate,
+            )
+
+        # メルカリ売却相場(SOLD出品の初観測ベース、直近30日・円)
+        sold_rows = db.mercari_sold_for_card(conn, card.id, since)
+        mercari_market = compute_market_stats(
+            [r["price_jpy"] for r in sold_rows], min_count
+        )
+        if mercari_market is not None:
+            db.upsert_mercari_market_snapshot(
+                conn,
+                card_id=card.id,
+                date=date.today().isoformat(),
+                median_jpy=mercari_market.median_usd,
+                count=mercari_market.count,
+                min_jpy=mercari_market.min_usd,
+                max_jpy=mercari_market.max_usd,
+            )
+
+        if market_mode == "ebay":
+            market, market_source = ebay_market, "ebay"
+        elif market_mode == "mercari":
+            market, market_source = mercari_market, "mercari"
+        else:  # auto
+            if ebay_market is not None:
+                market, market_source = ebay_market, "ebay"
+            else:
+                market, market_source = mercari_market, "mercari"
         if market is None:
             continue
-
-        # サイトの価格推移チャート・日次ダイジェストの騰落計算用に蓄積する
-        db.upsert_market_snapshot(
-            conn,
-            card_id=card.id,
-            date=date.today().isoformat(),
-            median_usd=market.median_usd,
-            count=market.count,
-            min_usd=market.min_usd,
-            max_usd=market.max_usd,
-            fx_rate=fx_rate,
-        )
 
         buy_rows = [
             ("mercari", r)
@@ -269,7 +303,10 @@ def recompute_matches(
         ]
         for source, row in buy_rows:
             price = row["price_jpy"] if source == "mercari" else row["min_price_jpy"]
-            profit = profit_for_source(cfg, source, market.median_usd, fx_rate, price)
+            if market_source == "ebay":
+                profit = profit_for_source(cfg, source, market.median_usd, fx_rate, price)
+            else:
+                profit = profit_for_mercari_market(cfg, source, market.median_usd, price)
             deals.append(
                 Deal(
                     card=card,
@@ -282,6 +319,7 @@ def recompute_matches(
                     confidence=row["match_confidence"],
                     stats=market,
                     profit=profit,
+                    market_source=market_source,
                 )
             )
     db.rebuild_matches(conn, deals)

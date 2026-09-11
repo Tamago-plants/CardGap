@@ -9,6 +9,12 @@ eBay の Sold(落札済み)相場と、メルカリ / スニーカーダンク(�
 - やること: スクレイプ → 同一カードマッチング → 相場集計 → 損益計算 → Web ダッシュボード表示 / Discord 通知(新着案件 + 日次ダイジェスト)
 - **やらないこと: 自動購入・自動入札・自動出品。検出と通知まで**
 
+> **現在の運用(メルカリ完結フェーズ)**: eBay はクラウド IP がブロックされるため収集を休止中。
+> 代わりに**メルカリの売り切れ(SOLD)出品**を収集して「メルカリ内の売却相場」を作り、
+> 相場より安い出品の検出・売れ筋ランキング・相場の騰落をメルカリ内で完結して回している。
+> eBay 相場は自宅 PC で収集した時点から自動的に優先される(`market.source: auto`)。
+> 詳細は「[メルカリ完結フェーズ](#メルカリ完結フェーズ現在の既定運用)」参照。
+
 ## アーキテクチャ
 
 **クラウド完結**。GitHub Actions が日次バッチを 1 日 4 回実行して DB と JSON を commit し、
@@ -141,6 +147,32 @@ Streamlit 側でのみ可能。
 - `cardgap.db` は Actions が commit するため追跡対象になっている。ローカルで作業する
   ときは実行前に `git pull` して最新の DB を取り込むこと
 
+## メルカリ完結フェーズ(現在の既定運用)
+
+eBay が収集できない期間でも回るように、**メルカリだけで完結する相場システム**を持っている。
+仕組み:
+
+1. **SOLD 収集**: 監視対象ごとにメルカリの売り切れ検索(`status=sold_out`・新着順)を巡回し、
+   「実際に売れた物と価格」を `listings_mercari_sold` に記録する。売却日時は検索結果に
+   含まれないため、**初観測日時を売却日の近似**として扱う(1 日 4 回巡回なので誤差は数時間)
+2. **メルカリ内相場**: カードごとに直近 30 日の売却価格から中央値・件数・最安・最高を集計し、
+   日次スナップショット(`mercari_market_history`)として蓄積 → サイトの円建てチャートと騰落計算に使う
+3. **割安検出**: 販売中の出品を「メルカリ売却相場どおりに売れたら」の損益で評価する
+   (想定売上 = 売却中央値、手数料 10%、送料 ¥210、為替は関与しない)。
+   これは**相場よりどれだけ安いかの物差し**であって、メルカリ内転売の推奨ではない
+   (最終的には eBay 相場と突き合わせる前提)
+4. **売れ筋・騰落**: 「直近 30 日に売れた件数」ランキングと売却相場の急騰/急落を
+   サイトと Discord 日次ダイジェスト(「メルカリ相場」embed)に出す
+
+相場の出所は `market.source` で制御する:
+
+- `auto`(既定): カードに eBay 相場があれば eBay(USD)、無ければメルカリ売却相場(JPY)。
+  **eBay を収集し始めたカードから自動的に eBay 基準へ切り替わる**
+- `ebay` / `mercari`: 固定
+
+未開封 BOX・プロモ・「NARUTO オールスタートランプ」などのグッズは
+[キーワード監視](#キーワード監視未開封boxプロモなど番号の無い商品)の行として watchlist に登録済み。
+
 ## eBay相場の収集(自宅PCで実行・ハイブリッド運用)
 
 クラウド(GitHub Actions)の IP は eBay の bot 検知にブロックされるため、
@@ -248,6 +280,9 @@ Discord 通知・日次ダイジェストを使う場合は Webhook URL を環�
 | | `timeout_ms` | ページ取得タイムアウト |
 | | `debug_html_dir` | 空以外にすると取得 HTML をそのディレクトリに保存(セレクタ調査用) |
 | | `chromium_executable` | Playwright 同梱以外の Chromium/Chrome を使う場合の実行ファイルパス(環境変数 `CARDGAP_CHROMIUM_PATH` が優先) |
+| `market` | `source` | 相場(売り側)の出所。`auto` = eBay 相場があれば eBay、無ければメルカリ売却相場 / `ebay` / `mercari` で固定 |
+| `mercari_sell` | `fee_rate` | メルカリ売却相場基準のときの販売手数料率(既定 10%) |
+| | `shipping_jpy` | 同・発送費(既定 ¥210 = ネコポス想定) |
 | `discord` | `webhook_url` | Webhook URL(環境変数 `DISCORD_WEBHOOK_URL` が優先) |
 | | `max_deals_per_message` | 1 メッセージあたりの案件数(Discord 上限の 10 で頭打ち) |
 | | `daily_digest` | 日次ダイジェスト(昨日のまとめ・ランキング・騰落)を送るか。`python -m cardgap digest` は設定に関係なく強制送信 |
@@ -330,8 +365,11 @@ naruto,ナルト カードダス プロモ,Naruto Carddass Promo,,,,1
 | `cards` | 監視カードマスタ(watchlist.csv の取込先) |
 | `listings_ebay_sold` | eBay 落札履歴(相場の元データ。`listing_url + sold_at` で重複排除) |
 | `listings_mercari` | メルカリ出品(今回の実行で見えなかった出品は `active=0` = 売切れ扱い) |
+| `listings_mercari_sold` | メルカリ売り切れ出品(メルカリ内相場の元データ。`first_seen_at` = 売却日の近似) |
 | `listings_snkrdunk` | スニダン商品(価格は最安出品価格) |
-| `matches` | 相場×仕入候補×損益の計算結果。**毎回全削除→再構築される** |
+| `market_history` | eBay 相場の日次スナップショット(カード×日付の中央値・件数。チャート/騰落用) |
+| `mercari_market_history` | メルカリ売却相場(円)の日次スナップショット(同上のメルカリ版) |
+| `matches` | 相場×仕入候補×損益の計算結果。**毎回全削除→再構築される**(`market_source` 列が相場の出所) |
 | `fx_rates` | USD/JPY レート履歴 |
 | `ignore_list` | ダッシュボードで「無視」した出品(以後非表示・非通知) |
 | `notified_deals` | Discord 通知済みの出品(再通知防止) |
@@ -374,10 +412,15 @@ eBay手数料JPY     = 想定売上 × (FVF + international_fee + promoted)
 利益率            = 実質利益 ÷ 仕入総額
 ```
 
+メルカリ売却相場基準(`market_source=mercari`)のときは同じ式に
+`想定売上 = 売却中央値(円)`・`手数料 = 売上 × mercari_sell.fee_rate`・
+`発送送料 = mercari_sell.shipping_jpy`・為替なし、を入れて計算する
+(`profit_for_mercari_market()`)。
+
 ### 相場信頼度
 
-eBay 直近 `ebay_lookback_days`(既定 30)日の落札件数が `threshold.min_sold_count_30d`(既定 3)
-未満なら `reliability=low`。low の案件はダッシュボードには出せるが **Discord 通知はされない**
+直近 `ebay_lookback_days`(既定 30)日の落札/売却件数(eBay 相場なら落札数、メルカリ売却相場なら
+売れた数)が `threshold.min_sold_count_30d`(既定 3)未満なら `reliability=low`。low の案件はダッシュボードには出せるが **Discord 通知はされない**
 (たまたま 1 件高く売れただけの「相場」で仕入れるのを防ぐ)。
 
 ## 制約・既知のリスク

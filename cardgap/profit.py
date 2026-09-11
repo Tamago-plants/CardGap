@@ -48,6 +48,42 @@ def compute_profit(
     )
 
 
+def profit_for_mercari_market(
+    cfg: Config, source: str, median_jpy: float, buy_price_jpy: float
+) -> ProfitResult:
+    """メルカリ売却相場(円)を基準にした損益。eBay相場が無い期間の割安度指標。
+
+    「この価格で仕入れて、メルカリの売却相場どおりに売れたら」の参考値:
+      想定売上 = 売却中央値(円)
+      手数料   = 売上 × mercari_sell.fee_rate(既定10%)
+      発送送料 = mercari_sell.shipping_jpy(既定210円 = ネコポス想定)
+    為替は関与しないため fx_rate は 1.0 を入れる。
+    ※メルカリ内での転売を推奨するものではなく「相場よりどれだけ安いか」の
+      物差しとして使う(最終的には eBay 相場と突き合わせる前提)。
+    """
+    if source == "mercari":
+        buy_fee_rate = float(cfg.get("buy_side.mercari_fee_rate", 0.0))
+        buy_shipping = float(cfg.get("buy_side.mercari_shipping_jpy", 0))
+    elif source == "snkrdunk":
+        buy_fee_rate = float(cfg.get("buy_side.snkrdunk_buyer_fee_rate", 0.055))
+        buy_shipping = float(cfg.get("buy_side.snkrdunk_shipping_jpy", 1000))
+    else:
+        raise ValueError(f"unknown source: {source}")
+    return compute_profit(
+        median_usd=median_jpy,          # 「相場の数値」として円をそのまま流す
+        fx_rate=1.0,
+        conversion_margin=0.0,
+        final_value_fee=float(cfg.get("mercari_sell.fee_rate", 0.10)),
+        per_order_fee_usd=0.0,
+        international_fee=0.0,
+        promoted_listing=0.0,
+        ship_out_jpy=float(cfg.get("mercari_sell.shipping_jpy", 210)),
+        buy_price_jpy=buy_price_jpy,
+        buy_fee_rate=buy_fee_rate,
+        buy_shipping_jpy=buy_shipping,
+    )
+
+
 def profit_for_source(
     cfg: Config, source: str, median_usd: float, fx_rate: float, buy_price_jpy: float
 ) -> ProfitResult:

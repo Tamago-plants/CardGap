@@ -61,6 +61,16 @@ discord:
   max_deals_per_message: 10
   daily_digest: true             # 日次ダイジェスト(昨日のまとめ・ランキング・騰落)を送るか
 
+# 相場(売り側)の出所
+market:
+  source: "auto"                 # auto: eBay相場があればeBay、無ければメルカリ売却相場
+                                 # ebay / mercari で固定も可
+
+# メルカリ売却相場を基準にするときの手数料モデル(「相場より安い出品」の物差し)
+mercari_sell:
+  fee_rate: 0.10                 # メルカリ販売手数料 10%
+  shipping_jpy: 210              # ネコポス想定の発送費
+
 # サイト(GitHub Pages)用の静的JSONエクスポート
 export:
   enabled: true

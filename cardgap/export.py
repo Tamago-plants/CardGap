@@ -74,6 +74,12 @@ def _deal_to_json(r: dict[str, Any]) -> dict[str, Any]:
         "fx_rate": r["fx_rate"],
         "computed_at": r["computed_at"],
         "first_seen_at": r["first_seen_at"],  # サイトの NEW バッジ用(初観測日時)
+        # 相場の出所と通貨。ebay_median_usd 系の値は market_source='mercari' のとき
+        # 円(メルカリ売却中央値)が入っている(列名は歴史的経緯)
+        "market_source": r["market_source"],
+        "market_currency": "JPY" if r["market_source"] == "mercari" else "USD",
+        "market_median": r["ebay_median_usd"],
+        "market_count": r["ebay_count_30d"],
     }
 
 
@@ -93,7 +99,8 @@ def build_history_payload(
     cards_out: list[dict[str, Any]] = []
     for card in db.list_cards(conn, enabled_only=False):
         rows = db.market_history_for_card(conn, card.id, since_date=since)
-        if not rows:
+        m_rows = db.mercari_market_history_for_card(conn, card.id, since_date=since)
+        if not rows and not m_rows:
             continue
         cards_out.append(
             {
@@ -114,6 +121,17 @@ def build_history_payload(
                         "max_usd": r["max_usd"],
                     }
                     for r in rows
+                ],
+                # メルカリ売却相場(円)の推移。eBay相場が無い期間のチャート用
+                "mercari_points": [
+                    {
+                        "date": r["date"],
+                        "median_jpy": r["median_jpy"],
+                        "count": r["count"],
+                        "min_jpy": r["min_jpy"],
+                        "max_jpy": r["max_jpy"],
+                    }
+                    for r in m_rows
                 ],
             }
         )
@@ -156,6 +174,61 @@ def _compute_movers(
     return movers
 
 
+def _compute_mercari_movers(
+    conn: sqlite3.Connection, max_gap_days: int = 8
+) -> list[dict[str, Any]]:
+    """メルカリ売却相場(円)の「最新 vs 前回」騰落率。_compute_movers のメルカリ版。"""
+    movers: list[dict[str, Any]] = []
+    for card in db.list_cards(conn, enabled_only=False):
+        snaps = db.latest_two_mercari_snapshots(conn, card.id)
+        if len(snaps) < 2:
+            continue
+        latest, prev = snaps[0], snaps[1]
+        try:
+            gap = (date.fromisoformat(latest["date"]) - date.fromisoformat(prev["date"])).days
+        except ValueError:
+            continue
+        if gap > max_gap_days or prev["median_jpy"] <= 0:
+            continue
+        change = (latest["median_jpy"] - prev["median_jpy"]) / prev["median_jpy"]
+        movers.append(
+            {
+                "card_id": card.id,
+                "display_name": card.display_name(),
+                "category": card.category,
+                "median_jpy": latest["median_jpy"],
+                "prev_median_jpy": prev["median_jpy"],
+                "change_rate": round(change, 4),
+                "count": latest["count"],
+                "date": latest["date"],
+                "prev_date": prev["date"],
+            }
+        )
+    return movers
+
+
+def _mercari_top_selling(conn: sqlite3.Connection, top_n: int) -> list[dict[str, Any]]:
+    """直近30日にメルカリで売れた件数が多いカードのランキング(売れ筋)。"""
+    rows: list[dict[str, Any]] = []
+    for card in db.list_cards(conn, enabled_only=False):
+        snaps = db.latest_two_mercari_snapshots(conn, card.id)
+        if not snaps:
+            continue
+        latest = snaps[0]
+        rows.append(
+            {
+                "card_id": card.id,
+                "display_name": card.display_name(),
+                "category": card.category,
+                "median_jpy": latest["median_jpy"],
+                "count": latest["count"],
+                "date": latest["date"],
+            }
+        )
+    rows.sort(key=lambda r: (r["count"], r["median_jpy"]), reverse=True)
+    return rows[:top_n]
+
+
 def build_summary_payload(cfg: Config, conn: sqlite3.Connection) -> dict[str, Any]:
     top_n = int(cfg.get("export.top_n", 10))
     movers_n = int(cfg.get("export.movers_n", 5))
@@ -180,6 +253,15 @@ def build_summary_payload(cfg: Config, conn: sqlite3.Connection) -> dict[str, An
     movers_down = sorted(
         [m for m in movers if m["change_rate"] < 0], key=lambda m: m["change_rate"]
     )[:movers_n]
+    m_movers = _compute_mercari_movers(conn)
+    mercari_up = sorted(
+        [m for m in m_movers if m["change_rate"] > 0],
+        key=lambda m: m["change_rate"],
+        reverse=True,
+    )[:movers_n]
+    mercari_down = sorted(
+        [m for m in m_movers if m["change_rate"] < 0], key=lambda m: m["change_rate"]
+    )[:movers_n]
 
     return {
         "generated_at": _now_iso(),
@@ -200,6 +282,10 @@ def build_summary_payload(cfg: Config, conn: sqlite3.Connection) -> dict[str, An
             "international_fee": float(cfg.get("ebay_fees.international_fee", 0.0135)),
             "promoted_listing": float(cfg.get("ebay_fees.promoted_listing", 0.02)),
             "ship_out_jpy": float(cfg.get("shipping.default_out_jpy", 2500)),
+            "mercari_sell": {
+                "fee_rate": float(cfg.get("mercari_sell.fee_rate", 0.10)),
+                "shipping_jpy": float(cfg.get("mercari_sell.shipping_jpy", 210)),
+            },
             "buy": {
                 "mercari": {
                     "fee_rate": float(cfg.get("buy_side.mercari_fee_rate", 0.0)),
@@ -217,6 +303,10 @@ def build_summary_payload(cfg: Config, conn: sqlite3.Connection) -> dict[str, An
         "top_by_profit": sorted(above, key=lambda r: r["profit_jpy"], reverse=True)[:top_n],
         "movers_up": movers_up,
         "movers_down": movers_down,
+        "market_mode": str(cfg.get("market.source", "auto")),
+        "mercari_movers_up": mercari_up,
+        "mercari_movers_down": mercari_down,
+        "mercari_top_selling": _mercari_top_selling(conn, top_n),
         "scrape_health": [
             {
                 "source": r["source"],
