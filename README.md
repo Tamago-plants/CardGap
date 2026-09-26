@@ -9,11 +9,14 @@ eBay の Sold(落札済み)相場と、メルカリ / スニーカーダンク(�
 - やること: スクレイプ → 同一カードマッチング → 相場集計 → 損益計算 → Web ダッシュボード表示 / Discord 通知(新着案件 + 日次ダイジェスト)
 - **やらないこと: 自動購入・自動入札・自動出品。検出と通知まで**
 
-> **現在の運用(メルカリ完結フェーズ)**: eBay はクラウド IP がブロックされるため収集を休止中。
-> 代わりに**メルカリの売り切れ(SOLD)出品**を収集して「メルカリ内の売却相場」を作り、
-> 相場より安い出品の検出・売れ筋ランキング・相場の騰落をメルカリ内で完結して回している。
-> eBay 相場は自宅 PC で収集した時点から自動的に優先される(`market.source: auto`)。
-> 詳細は「[メルカリ完結フェーズ](#メルカリ完結フェーズ現在の既定運用)」参照。
+> **現在の運用(ハイブリッド)**: メルカリ収集〜サイト更新はクラウドが全自動、
+> **eBay Sold 相場の収集だけは自宅 PC**(`scripts/ebay_local`、週2〜3回)で行う。
+> クラウド IP は eBay にブロックされるため、クラウド側は eBay を試行しない設定。
+> eBay 相場が無い期間・カードは**メルカリの売り切れ(SOLD)出品**から作った
+> 「メルカリ内の売却相場」で割安検出・売れ筋・騰落が回り続け、eBay 相場を収集した
+> カードから自動的に eBay 基準へ切り替わる(`market.source: auto`)。
+> 詳細は「[メルカリ完結フェーズ](#メルカリ完結フェーズ現在の既定運用)」
+> と「[eBay相場の収集](#ebay相場の収集自宅pcで実行ハイブリッド運用)」参照。
 
 ## アーキテクチャ
 
@@ -23,8 +26,9 @@ eBay の Sold(落札済み)相場と、メルカリ / スニーカーダンク(�
 
 ```
 GitHub Actions(.github/workflows/scrape.yml、JST 7/11/15/19時)
-  ├─ python -m cardgap.pipeline
-  │    スクレイプ → 相場集計 → 損益計算 → Discord通知 → site/public/data/*.json
+  ├─ python -m cardgap.pipeline --sources mercari,mercari_sold,snkrdunk
+  │    スクレイプ(eBayは除外=自宅PC専任)→ 相場集計 → 損益計算
+  │    → Discord通知 → site/public/data/*.json
   └─ cardgap.db + JSON を commit & push → deploy-pages.yml を起動
         │
         ▼
@@ -137,11 +141,13 @@ Streamlit 側でのみ可能。
 
 - **Discord 通知を使う場合**: リポジトリの Settings > Secrets and variables > Actions >
   New repository secret で `DISCORD_WEBHOOK_URL` を登録する(日次ダイジェストは 1 日 1 回だけ送信される)
-- **実行回数の変更**: `scrape.yml` の `cron` を編集(UTC 表記。JST−9 時間)。
-  eBay のクエリ上限は DB の実行ログで日単位管理されるため、回数を増やしても上限は超えない
+- **実行回数の変更**: `scrape.yml` の `cron` を編集(UTC 表記。JST−9 時間)
 - **手動実行**: Actions タブ > Scheduled scrape > Run workflow
 - **停止**: Actions タブ > Scheduled scrape > 右上「…」> Disable workflow
-- ⚠ **制約**: GitHub ランナーはデータセンター IP のため、eBay/メルカリの bot 検知に
+- **eBay はクラウドから実行しない**(`--sources` で除外)。クラウド IP は eBay に
+  ブロックされる上、試行するだけで 1 日 50 クエリの枠を消費するため。eBay 相場は
+  下記の自宅 PC 実行(`scripts/ebay_local`)専任
+- ⚠ **制約**: GitHub ランナーはデータセンター IP のため、メルカリの bot 検知に
   自宅回線より引っかかりやすい。成功率はダッシュボードの収集ステータスと Discord 通知で
   監視し、失敗が続く場合は下記のローカル実行に切り替える
 - `cardgap.db` は Actions が commit するため追跡対象になっている。ローカルで作業する
@@ -176,8 +182,9 @@ eBay が収集できない期間でも回るように、**メルカリだけで�
 ## eBay相場の収集(自宅PCで実行・ハイブリッド運用)
 
 クラウド(GitHub Actions)の IP は eBay の bot 検知にブロックされるため、
-**eBay Sold 相場の収集だけは自宅 PC から実行する**(メルカリ収集・集計・サイト更新・
-通知はクラウドが全自動で継続する)。
+**eBay Sold 相場の収集は自宅 PC から実行する**(メルカリ収集・集計・サイト更新・
+通知はクラウドが全自動で継続する)。クラウド側は eBay を試行しない設定のため、
+**1 日 50 クエリの枠はまるごと PC 実行分**になる。
 
 ### 初回セットアップ(1回だけ、約5分)
 
@@ -200,6 +207,10 @@ powershell -ExecutionPolicy Bypass -File scripts\ebay_local.ps1  # Windows
 最新DBの取得 → eBayスクレイプ(1日50クエリ上限は自動管理)→ 相場集計・損益計算・
 Discord通知 → サイト用JSON生成 → push まで一括で行う。push を受けてサイトが自動更新される。
 Discord 通知を出したい場合は実行前に `DISCORD_WEBHOOK_URL` を設定しておく。
+
+**取得が 0 件だったとき**はスクリプトが取得ページを `debug-html-local` ブランチへ
+自動送信する(bot 検知かページ構造変更かの診断用)。その場合は Claude に
+「eBay ローカル実行が 0 件だった」と伝えれば、実物の HTML を見てパーサを修正できる。
 
 cron / タスクスケジューラに登録すれば PC 起動中は全自動(登録例は次節と同じ要領で、
 スクリプトを `ebay_local.sh` / `ebay_local.ps1` にする)。
@@ -442,8 +453,10 @@ eBay手数料JPY     = 想定売上 × (FVF + international_fee + promoted)
 - **スニダン(2026-08 時点)**: キーワード検索がログイン必須になったため収集を停止中
   (`categories.pokemon.snkrdunk: false`)。ログインが必要なページはスコープ外。仕様が
   戻ったら true に切り替える
-- **eBay(2026-08 時点)**: GitHub Actions の IP には「Security Measure」ページ(bot検知)が
-  返り収集不可。サーキットブレーカーで数分で切り上げる設計。対応方針は Issue/会話で相談
+- **eBay**: クラウド IP には「Security Measure」ページ(bot検知)が返り収集不可のため、
+  クラウドは eBay を試行しない(`--sources` で除外。クエリ枠も消費しない)。収集は自宅 PC の
+  `scripts/ebay_local` 専任で、0 件時は取得ページが `debug-html-local` ブランチに自動送信される。
+  サーキットブレーカー(連続0件で中断)は PC 実行時の保険として残っている
 - **メルカリの海外IP表示**: 海外IPからは価格が US$ 表示になるが、aria-label の円価格を
   読むため収集は正常に動く
 - **メルカリ / スニダンの DOM 変更**: パーサが壊れたら `config.yaml` の `scrape.debug_html_dir` に

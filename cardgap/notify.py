@@ -232,6 +232,34 @@ def _digest_health_line(h: dict[str, Any]) -> str:
     return line
 
 
+# eBay相場が何日更新されなければダイジェストで警告するか。
+# クラウドはeBayを試行しないため、PC実行(scripts/ebay_local)をサボると
+# eBay相場は静かに古くなり30日窓から抜けていく。それを可視化する
+_EBAY_STALE_WARN_DAYS = 4
+
+
+def _ebay_staleness_line(summary: dict[str, Any]) -> Optional[str]:
+    """eBay相場の鮮度警告行。eBay運用が無い/新しい/日付不明なら None。"""
+    ebay = next(
+        (h for h in (summary.get("scrape_health") or []) if h.get("source") == "ebay"),
+        None,
+    )
+    if ebay is None:
+        return None
+    try:
+        started = _date.fromisoformat(str(ebay.get("started_at") or "")[:10])
+        today = _date.fromisoformat(str(summary.get("date") or ""))
+    except ValueError:
+        return None
+    age = (today - started).days
+    if age < _EBAY_STALE_WARN_DAYS:
+        return None
+    return (
+        f"⚠ eBay相場が{age}日更新されていません"
+        "(PCで scripts/ebay_local を実行してください)"
+    )
+
+
 def _digest_summary_embed(summary: dict[str, Any]) -> dict[str, Any]:
     """embed「サマリ」: 案件数・為替レート・収集ヘルス。"""
     fx = summary.get("fx_rate")
@@ -249,10 +277,14 @@ def _digest_summary_embed(summary: dict[str, Any]) -> dict[str, Any]:
     ]
     health = summary.get("scrape_health") or []
     if health:
+        lines = [_digest_health_line(h) for h in health]
+        stale = _ebay_staleness_line(summary)
+        if stale:
+            lines.append(stale)
         fields.append(
             {
                 "name": "収集ヘルス",
-                "value": "\n".join(_digest_health_line(h) for h in health),
+                "value": "\n".join(lines),
                 "inline": False,
             }
         )

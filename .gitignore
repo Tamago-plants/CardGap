@@ -7,3 +7,4 @@ cardgap.db-journal
 *.log
 .pytest_cache/
 debug_html/
+debug_html_local/

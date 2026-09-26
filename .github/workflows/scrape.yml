@@ -2,14 +2,15 @@
 # 1日4回実行し、cardgap.db と site/public/data を commit して Pages を再デプロイする。
 #
 # 注意:
-# - GitHub ランナーはデータセンター IP のため、eBay/メルカリの bot 検知に自宅回線より
+# - GitHub ランナーはデータセンター IP のため、メルカリの bot 検知に自宅回線より
 #   引っかかりやすい。成功率はダッシュボードの収集ステータスと Discord 通知で監視し、
 #   失敗が続く場合は実行回数を減らすか scripts/daily.sh によるローカル実行へ切り替える
-# - eBay の 1 日クエリ上限(scrape.max_ebay_queries_per_day)は DB の実行ログで
-#   管理しているため、1 日に複数回走っても合計で上限を超えない
+# - eBay はクラウドから実行しない(--sources で除外)。クラウドIPはeBayにブロックされ、
+#   試行するだけで 1 日 50 クエリの枠(DBの実行ログで日単位管理)を消費するため、
+#   枠は自宅PCの scripts/ebay_local.(sh|ps1) 実行に全振りする
 # - Discord 日次ダイジェストは 1 日 1 回だけ送られる(送信済み日付を DB に記録)
 name: Scheduled scrape
-# 2026-09-11: メルカリSOLD収集(メルカリ完結フェーズ)の検証run
+# 2026-09-26: クラウドのeBay試行を停止(eBayは自宅PC専任)の検証run
 
 on:
   schedule:
@@ -50,7 +51,8 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           CARDGAP_DEBUG_HTML_DIR: debug_html   # 取得失敗ページの診断用に保存
-        run: python -m cardgap.pipeline
+        # eBayは除外(自宅PCの ebay_local スクリプト専任。クエリ枠を消費しないため)
+        run: python -m cardgap.pipeline --sources mercari,mercari_sold,snkrdunk
 
       # 失敗ページのHTMLをartifactとして残す(bot検知かDOM変更かの切り分け用)
       - name: Upload debug HTML
